@@ -1,0 +1,25 @@
+{
+  "name": "gateway-ngrok",
+  "version": "1.0.0",
+  "description": "Gateway padronizado para roteamento de tráfego ngrok",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js",
+    "dev": "nodemon gateway.js"
+  },
+  "keywords": [
+    "gateway",
+    "ngrok",
+    "proxy",
+    "reverse-proxy"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^2.0.6"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

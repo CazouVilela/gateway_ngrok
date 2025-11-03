@@ -1,0 +1,64 @@
+{
+  "gateway": {
+    "port": 9000,
+    "ngrokDomain": "sistemas.ngrok.io"
+  },
+  "applications": [
+    {
+      "name": "Metabase",
+      "path": "/metabase",
+      "target": "http://localhost:3000",
+      "pathRewrite": true,
+      "ipProtection": false,
+      "websocket": true
+    },
+    {
+      "name": "Airbyte",
+      "path": "/",
+      "target": "http://localhost:8000",
+      "pathRewrite": false,
+      "ipProtection": true,
+      "websocket": true
+    },
+    {
+      "name": "Grafana",
+      "path": "/grafana",
+      "target": "http://localhost:3002",
+      "pathRewrite": false,
+      "ipProtection": true,
+      "websocket": true
+    },
+    {
+      "name": "Épica Frontend",
+      "path": "/epica",
+      "target": "http://localhost:5000",
+      "pathRewrite": true,
+      "ipProtection": true,
+      "websocket": true
+    },
+    {
+      "name": "Épica Backend",
+      "path": "/epica-api",
+      "target": "http://localhost:5001",
+      "pathRewrite": true,
+      "ipProtection": true,
+      "websocket": false
+    },
+    {
+      "name": "IDE",
+      "path": "/IDE",
+      "target": "http://localhost:3780",
+      "pathRewrite": true,
+      "ipProtection": true,
+      "websocket": true
+    },
+    {
+      "name": "RPO Hub API",
+      "path": "/rpo-api",
+      "target": "http://localhost:6000",
+      "pathRewrite": true,
+      "ipProtection": false,
+      "websocket": false
+    }
+  ]
+}
