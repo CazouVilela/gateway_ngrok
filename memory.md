@@ -299,7 +299,7 @@ sudo systemctl restart grafana-server
 
 ---
 
-### 4. IDE (A VERIFICAR)
+### 4. IDE (FUNCIONA PERFEITAMENTE)
 
 **Gateway** (`config.json`):
 ```json
@@ -307,18 +307,29 @@ sudo systemctl restart grafana-server
   "name": "IDE",
   "path": "/IDE",
   "target": "http://localhost:3780",
-  "pathRewrite": true,        ← Remove /IDE
+  "pathRewrite": true,        ← Remove /IDE antes de enviar
   "ipProtection": true,
   "websocket": true
 }
 ```
 
-**IDE** (a verificar):
-- Remover proteção de IP própria (já no gateway)
-- Verificar se precisa BASE_PATH detection no frontend
-- Limpar referências ao gateway antigo
+**IDE** (configurado corretamente):
+- ✅ Proteção de IP removida do código (já no gateway)
+- ✅ BASE_PATH detection implementado em `public/app.js`
+  - Detecta via `window.location.pathname`
+  - Se path começa com `/IDE/`, adiciona prefixo em todas as requisições
+- ✅ WebSocket configurado corretamente com BASE_PATH
+- ✅ Referências ao gateway antigo atualizadas
+- ✅ Documentação README.md atualizada
 
-**Status**: ⏳ Pendente revisão
+**Funcionamento:**
+- Frontend detecta `/IDE/` do browser
+- Gateway recebe `/IDE/...` e envia `/...` para backend
+- Express serve arquivos static da raiz
+- WebSocket funciona corretamente
+- Tanto localhost quanto ngrok funcionando
+
+**Status**: ✅ Funcionando perfeitamente (localhost e ngrok)
 
 ---
 
@@ -421,7 +432,7 @@ const getApiUrl = () => {
 | **Grafana** | /grafana | Proxy | false | true | root_url + serve_from_sub_path | ✅ Funciona |
 | **Airbyte** | / (raiz) | Proxy | false | true | Nenhuma (limitação técnica) | ✅ Funciona |
 | **Épica** | /epica + /epica-api | Static+Proxy | true | true | OAuth Universal + API detection | ✅ Funciona |
-| **IDE** | /IDE | Proxy | true | true | BASE_PATH detection? | ⏳ Testar |
+| **IDE** | /IDE | Proxy | true | true | BASE_PATH detection + WebSocket | ✅ Funciona |
 | **RPO API** | /rpo-api | Proxy | true | false | Nenhuma | ⏳ Testar |
 
 **Legenda:**
@@ -432,6 +443,16 @@ const getApiUrl = () => {
 ---
 
 ## Histórico
+- **2025-11-03 22:10**: Corrigido suporte a WebSocket via ngrok
+  - Adicionado handler de 'upgrade' event no servidor HTTP
+  - WebSocket agora funciona corretamente via ngrok com validação de IP
+  - IDE testada e funcionando perfeitamente em localhost e ngrok
+- **2025-11-03 21:50**: IDE migrada para novo gateway com sucesso
+  - Proteção de IP removida do código e delegada ao gateway
+  - BASE_PATH detection já estava implementado
+  - WebSocket funcionando corretamente via gateway
+  - Documentação README.md atualizada
+  - Funciona perfeitamente em localhost e ngrok
 - **2025-11-03 20:00**: Épica OAuth Universal implementado e funcionando perfeitamente
   - Detecção automática de origem (localhost ou ngrok)
   - Callback fixo Google + redirect dinâmico ao usuário

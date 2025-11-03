@@ -278,6 +278,47 @@ const server = app.listen(PORT, () => {
   console.log(`❤️  Health check: http://localhost:${PORT}/health\n`);
 });
 
+// ===== HANDLER DE WEBSOCKET UPGRADE =====
+// O http-proxy-middleware precisa deste listener para upgrades de WebSocket
+server.on('upgrade', (req, socket, head) => {
+  console.log(`[WS UPGRADE] ${req.url}`);
+
+  // Encontrar a aplicação correspondente
+  const matchingApp = sortedApps.find(app => req.url.startsWith(app.path));
+
+  if (!matchingApp) {
+    console.log(`  ❌ No matching app for WebSocket upgrade: ${req.url}`);
+    socket.destroy();
+    return;
+  }
+
+  console.log(`  → Matched app: ${matchingApp.name}`);
+
+  // Validar IP se necessário
+  if (matchingApp.ipProtection) {
+    const host = req.headers.host || '';
+
+    // Via ngrok: validar IP
+    if (host.includes(config.gateway.ngrokDomain)) {
+      const forwardedFor = req.headers['x-forwarded-for'] || '';
+      const clientIP = forwardedFor.split(',')[0].trim();
+
+      console.log(`  🔍 WS IP check: ${clientIP}`);
+
+      if (!authorizedIPs.ips.includes(clientIP)) {
+        console.log(`  ❌ WS IP BLOCKED: ${clientIP}`);
+        socket.destroy();
+        return;
+      }
+
+      console.log(`  ✅ WS IP authorized`);
+    }
+  }
+
+  // O upgrade será tratado pelo proxy middleware
+  // Deixar o Express continuar o processamento
+});
+
 // ===== SHUTDOWN GRACIOSO =====
 process.on('SIGTERM', () => {
   console.log('\n🛑 Encerrando gateway...');
