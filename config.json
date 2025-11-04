@@ -54,7 +54,7 @@
     },
     {
       "name": "RPO Hub API",
-      "path": "/rpo-api",
+      "path": "/rpo",
       "target": "http://localhost:6000",
       "pathRewrite": true,
       "ipProtection": false,

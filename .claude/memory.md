@@ -1,9 +1,45 @@
-# Gateway Ngrok - Documentação do Projeto
+# GATEWAY NGROK - Memória do Projeto
+
+<!-- CHAPTER: 0 Configurações da IDE -->
+
+## 🔧 Configurações da IDE
+
+> **⚠️ LEITURA OBRIGATÓRIA**: Este projeto utiliza a IDE Customizada.
+>
+> **Documentação essencial** (leia sempre ao carregar o projeto):
+> - [RELACIONAMENTO_COM_IDE.md](.claude/RELACIONAMENTO_COM_IDE.md) - **Como este projeto se relaciona com a IDE**
+> - [TEMPLATE_PROJETO.md](.claude/TEMPLATE_PROJETO.md) - Template de organização de projetos
+> - [GUIA_SISTEMA_PROJETOS.md](.claude/GUIA_SISTEMA_PROJETOS.md) - Sistema de gerenciamento de projetos
+
+### Comandos Slash Disponíveis
+
+- `/iniciar` - Gerenciar projetos (listar, ativar, criar novo)
+- `/subir` - Git commit + push automatizado
+- `/subir_estavel` - Git commit + push + tag de versão estável
+- `/tryGPT "prompt"` - Consultar ChatGPT manualmente
+- `/implantacao_automatica` - Deploy com comparação Claude vs ChatGPT
+
+### Funcionalidades da IDE
+
+Este projeto utiliza:
+- **Terminal virtual** integrado (xterm.js)
+- **Explorador de arquivos** lateral com tree view
+- **Sistema de planejamento** hierárquico (interface web)
+- **Draft/Rascunho** automático por projeto
+- **Memórias persistentes** com capítulos
+- **Visualização de commits** git com tags
+- **Integração ChatGPT** via Playwright
+
+
+<!-- CHAPTER: 1 Objetivo -->
 
 ## Objetivo
+
 Gateway padronizado e simples para rotear tráfego do ngrok para aplicações locais com validação opcional de IP.
 
 ---
+
+<!-- CHAPTER: 2 Arquitetura Antiga (A SER REMOVIDA) -->
 
 ## Arquitetura Antiga (A SER REMOVIDA)
 
@@ -46,6 +82,8 @@ Gateway padronizado e simples para rotear tráfego do ngrok para aplicações lo
 - **9000**: Nginx (A SER REMOVIDO/RECONFIGURADO)
 
 ---
+
+<!-- CHAPTER: 3 Nova Arquitetura (A SER IMPLEMENTADA) -->
 
 ## Nova Arquitetura (A SER IMPLEMENTADA)
 
@@ -116,6 +154,8 @@ Aplicação Local (localhost:porta)
 
 ---
 
+<!-- CHAPTER: 4 Tarefas de Limpeza -->
+
 ## Tarefas de Limpeza
 
 ### 1. Parar Serviços Antigos
@@ -141,6 +181,8 @@ sudo cp /etc/nginx/conf.d/sistemas-consolidado.conf /etc/nginx/conf.d/sistemas-c
 
 ---
 
+<!-- CHAPTER: 5 Princípios do Novo Gateway -->
+
 ## Princípios do Novo Gateway
 
 1. **Simplicidade**: Configuração centralizada em JSON
@@ -150,6 +192,8 @@ sudo cp /etc/nginx/conf.d/sistemas-consolidado.conf /etc/nginx/conf.d/sistemas-c
 5. **Manutenibilidade**: Uma única fonte de verdade
 
 ---
+
+<!-- CHAPTER: 6 Notas Importantes -->
 
 ## Notas Importantes
 
@@ -169,6 +213,8 @@ sudo cp /etc/nginx/conf.d/sistemas-consolidado.conf /etc/nginx/conf.d/sistemas-c
 ---
 
 ---
+
+<!-- CHAPTER: 7 Customizações Necessárias por Aplicação -->
 
 ## Customizações Necessárias por Aplicação
 
@@ -424,6 +470,8 @@ const getApiUrl = () => {
 
 ---
 
+<!-- CHAPTER: 8 Tabela Resumo de Customizações -->
+
 ## Tabela Resumo de Customizações
 
 | Aplicação | Path | Tipo | pathRewrite | ipProtection | Customização App | Status |
@@ -442,7 +490,10 @@ const getApiUrl = () => {
 
 ---
 
+<!-- CHAPTER: 9 Histórico -->
+
 ## Histórico
+
 - **2025-11-03 22:10**: Corrigido suporte a WebSocket via ngrok
   - Adicionado handler de 'upgrade' event no servidor HTTP
   - WebSocket agora funciona corretamente via ngrok com validação de IP
@@ -475,6 +526,8 @@ const getApiUrl = () => {
 
 ---
 
+<!-- CHAPTER: 10 Organização de Documentação -->
+
 ## Organização de Documentação
 
 **IMPORTANTE**: Toda a documentação deste projeto deve ser armazenada na pasta `/documentacao`.
@@ -482,3 +535,4 @@ const getApiUrl = () => {
 - **README.md** (raiz do projeto): Contém apenas informações gerais e orientação para `/documentacao`
 - **memory.md** (`.claude/`): Este arquivo - para carregamento rápido de contexto do Claude
 - **Demais documentos**: Devem estar em `/documentacao` (arquitetura, guias, especificações, etc.)
+

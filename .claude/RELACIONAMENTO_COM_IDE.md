@@ -1,0 +1,1 @@
+/home/cazouvilela/projetos/IDE_customizada/.claude/RELACIONAMENTO_COM_IDE.md
