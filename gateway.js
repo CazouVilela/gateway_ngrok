@@ -97,12 +97,17 @@ function createIPValidationMiddleware(appName) {
 }
 
 // ===== CRIAR PROXY PARA CADA APLICAÇÃO =====
-function createApplicationProxy(app) {
+function createApplicationProxy(app, filterFn = null) {
   const proxyOptions = {
     target: app.target,
     changeOrigin: true,
-    ws: app.websocket,
+    ws: false, // WebSocket upgrades are handled manually in server.on('upgrade')
     pathRewrite: app.pathRewrite ? { [`^${app.path}`]: '' } : undefined,
+
+    // Adicionar filtro se fornecido
+    ...(filterFn && {
+      filter: (pathname, req) => filterFn(pathname, req)
+    }),
 
     onProxyReq: (proxyReq, req, res) => {
       // Preservar hostname original (sem porta)
@@ -262,13 +267,33 @@ const sortedApps = [...config.applications].sort((a, b) => {
 sortedApps.forEach(appConfig => {
   console.log(`Registering: ${appConfig.path} → ${appConfig.target} (IP Protection: ${appConfig.ipProtection ? 'ON' : 'OFF'})`);
 
-  // Adicionar middleware de IP se necessário
-  if (appConfig.ipProtection) {
-    app.use(appConfig.path, createIPValidationMiddleware(appConfig.name));
-  }
+  // Para path raiz (/), criar filtro para evitar capturar paths de outras apps
+  if (appConfig.path === '/') {
+    const otherPaths = config.applications
+      .filter(app => app.path !== '/')
+      .map(app => app.path);
 
-  // Adicionar proxy
-  app.use(appConfig.path, createApplicationProxy(appConfig));
+    // Função de filtro: retorna false se o path pertence a outra app
+    const filterFn = (pathname, req) => {
+      const matchesOtherApp = otherPaths.some(path => pathname.startsWith(path));
+      return !matchesOtherApp; // Só processa se NÃO for de outra app
+    };
+
+    // Adicionar middleware de IP se necessário
+    if (appConfig.ipProtection) {
+      app.use('/', createIPValidationMiddleware(appConfig.name));
+    }
+
+    // Adicionar proxy com filtro
+    app.use('/', createApplicationProxy(appConfig, filterFn));
+  } else {
+    // Para outras apps, registrar normalmente
+    if (appConfig.ipProtection) {
+      app.use(appConfig.path, createIPValidationMiddleware(appConfig.name));
+    }
+
+    app.use(appConfig.path, createApplicationProxy(appConfig));
+  }
 });
 
 // ===== INICIAR SERVIDOR =====
@@ -279,26 +304,27 @@ const server = app.listen(PORT, () => {
 });
 
 // ===== HANDLER DE WEBSOCKET UPGRADE =====
-// O http-proxy-middleware precisa deste listener para upgrades de WebSocket
+// Custom upgrade handler to prevent multiple proxies from upgrading the same connection
+const proxyServers = new Map(); // Store proxy servers for manual upgrade handling
+
 server.on('upgrade', (req, socket, head) => {
   console.log(`[WS UPGRADE] ${req.url}`);
 
-  // Encontrar a aplicação correspondente
+  // Find the matching application - use sorted apps to match most specific first
   const matchingApp = sortedApps.find(app => req.url.startsWith(app.path));
 
-  if (!matchingApp) {
-    console.log(`  ❌ No matching app for WebSocket upgrade: ${req.url}`);
+  if (!matchingApp || !matchingApp.websocket) {
+    console.log(`  ❌ No WebSocket-enabled app for: ${req.url}`);
     socket.destroy();
     return;
   }
 
   console.log(`  → Matched app: ${matchingApp.name}`);
 
-  // Validar IP se necessário
+  // IP validation for protected apps via ngrok
   if (matchingApp.ipProtection) {
     const host = req.headers.host || '';
 
-    // Via ngrok: validar IP
     if (host.includes(config.gateway.ngrokDomain)) {
       const forwardedFor = req.headers['x-forwarded-for'] || '';
       const clientIP = forwardedFor.split(',')[0].trim();
@@ -315,8 +341,25 @@ server.on('upgrade', (req, socket, head) => {
     }
   }
 
-  // O upgrade será tratado pelo proxy middleware
-  // Deixar o Express continuar o processamento
+  // Get or create proxy server for this app
+  const key = `${matchingApp.name}-${matchingApp.target}`;
+  if (!proxyServers.has(key)) {
+    const proxy = require('http-proxy').createProxyServer({
+      target: matchingApp.target,
+      ws: true
+    });
+    proxyServers.set(key, proxy);
+  }
+
+  const proxy = proxyServers.get(key);
+  console.log(`  ⚡ Upgrading WebSocket: ${matchingApp.name} ${req.url} → ${matchingApp.target}`);
+
+  proxy.ws(req, socket, head, (err) => {
+    if (err) {
+      console.error(`  ❌ WS upgrade error:`, err.message);
+      socket.destroy();
+    }
+  });
 });
 
 // ===== SHUTDOWN GRACIOSO =====

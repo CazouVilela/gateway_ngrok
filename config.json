@@ -48,7 +48,7 @@
       "name": "IDE",
       "path": "/IDE",
       "target": "http://localhost:3780",
-      "pathRewrite": true,
+      "pathRewrite": false,
       "ipProtection": true,
       "websocket": true
     },
