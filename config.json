@@ -51,14 +51,6 @@
       "pathRewrite": false,
       "ipProtection": true,
       "websocket": true
-    },
-    {
-      "name": "RPO Hub API",
-      "path": "/rpo",
-      "target": "http://localhost:6000",
-      "pathRewrite": true,
-      "ipProtection": false,
-      "websocket": false
     }
   ]
 }

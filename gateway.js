@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Gateway Padronizado para Ngrok
+ * Gateway Local Padronizado
  *
  * Arquitetura simples:
  * - Configuração centralizada em config.json
  * - Validação opcional de IP por aplicação
  * - Suporte a WebSocket
  * - Path rewriting opcional
+ *
+ * NOTA: RPO Hub API foi migrado para ngrok direto (api-sistema.ngrok.io)
+ * e não usa mais este gateway. API tem segurança própria via token.
  */
 
 const express = require('express');
