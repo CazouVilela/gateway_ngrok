@@ -23,7 +23,7 @@
     {
       "name": "Grafana",
       "path": "/grafana",
-      "target": "http://localhost:3002",
+      "target": "http://localhost:3003",
       "pathRewrite": false,
       "ipProtection": true,
       "websocket": true

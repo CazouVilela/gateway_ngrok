@@ -1,106 +1,101 @@
-# Gateway Padronizado Ngrok
+# Gateway Local - Cloudflare Tunnel
 
-Gateway simples e moderno para roteamento de tráfego do ngrok para aplicações locais.
+Gateway de roteamento hostname-based com validação de IP para serviços locais via Cloudflare Tunnel.
 
 ## 🎯 Características
 
-- ✅ Configuração centralizada em JSON
-- ✅ Validação opcional de IP por aplicação
-- ✅ Suporte a WebSocket
-- ✅ Path rewriting automático
-- ✅ Redirect automático de trailing slash (301)
-- ✅ Suporte a build estático + proxy (static-proxy)
-- ✅ Fácil adicionar novas aplicações
+- ✅ Roteamento por hostname (subdomínio)
+- ✅ Validação de IP usando headers do Cloudflare
+- ✅ Suporte completo a WebSocket
+- ✅ Fix automático de CSRF para Grafana
+- ✅ Proteção de IP configurável por serviço
 - ✅ Dashboard web de monitoramento
-- ✅ Logs detalhados
+- ✅ Logs detalhados com rastreamento completo
+
+## 🏗️ Arquitetura
+
+```
+Browser → Cloudflare Tunnel → Gateway (porta 9000) → Serviços locais
+```
+
+O gateway atua como middleware entre o Cloudflare Tunnel e os serviços locais, fornecendo:
+- **Validação de IP**: Usando header `cf-connecting-ip` do Cloudflare
+- **Roteamento**: Por hostname/subdomínio para cada serviço
+- **CSRF handling**: Reescrita automática de headers Origin/Referer para Grafana
 
 ## 📁 Estrutura
 
 ```
-gateway_ngrok/
-├── gateway.js              # Gateway principal
-├── config.json             # Configuração de aplicações
+gateway_local/
+├── gateway.js              # Gateway hostname-based
+├── config.json             # Configuração de serviços
 ├── authorized_ips.json     # IPs autorizados
 ├── package.json            # Dependências NPM
-├── memory.md               # Documentação técnica
+├── blocked_access.log      # Log de acessos bloqueados
 └── README.md               # Este arquivo
 ```
 
 ## 🚀 Uso
 
-### Iniciar gateway:
-```bash
-npm start
-```
-
-### Modo desenvolvimento (com auto-reload):
-```bash
-npm run dev
-```
-
 ### Como serviço systemd:
 ```bash
-sudo systemctl start gateway-ngrok
-sudo systemctl status gateway-ngrok
-sudo journalctl -u gateway-ngrok -f
+sudo systemctl start gateway-cloudflare
+sudo systemctl status gateway-cloudflare
+sudo journalctl -u gateway-cloudflare -f
+```
+
+### Reiniciar após alterações:
+```bash
+sudo systemctl restart gateway-cloudflare
 ```
 
 ## ⚙️ Configuração
 
-### Adicionar nova aplicação em `config.json`:
+### Estrutura do `HOSTNAME_MAP` (gateway.js):
 
-**Proxy reverso simples:**
-```json
-{
-  "name": "Nome da App",
-  "path": "/caminho",
-  "target": "http://localhost:PORTA",
-  "pathRewrite": true,
-  "ipProtection": false,
-  "websocket": true
-}
+```javascript
+const HOSTNAME_MAP = {
+  'servico.sistema.cloud': {
+    name: 'Nome do Serviço',
+    target: 'http://localhost:PORTA',
+    ipProtection: true,  // Validar IP?
+    websocket: true      // Suportar WebSocket?
+  }
+};
 ```
 
-**Static + Proxy (para React apps com API):**
-```json
-{
-  "name": "App React",
-  "path": "/app",
-  "type": "static-proxy",
-  "staticPath": "/caminho/para/build",
-  "target": "http://localhost:PORTA_API",
-  "apiPath": "/app-api",
-  "ipProtection": true
-}
-```
+### Serviços Configurados:
 
-**Campos:**
-- `name`: Nome da aplicação (para logs)
-- `path`: Caminho da URL (ex: `/metabase`)
-- `type`: Tipo de proxy (`proxy` ou `static-proxy`)
-- `target`: URL da aplicação local (backend)
-- `staticPath`: Caminho para build estático (apenas para `static-proxy`)
-- `apiPath`: Path da API (apenas para `static-proxy`)
-- `pathRewrite`: Remover prefixo antes de enviar para app? (true/false)
-- `ipProtection`: Validar IP quando via ngrok? (true/false)
-- `websocket`: Suportar WebSocket? (true/false)
+| Serviço | Hostname | Porta | IP Protection | WebSocket |
+|---------|----------|-------|---------------|-----------|
+| Metabase | `metabase.sistema.cloud` | 3000 | ❌ Não | ✅ Sim |
+| Airbyte | `airbyte.sistema.cloud` | 8000 | ✅ Sim | ✅ Sim |
+| Grafana | `grafana.sistema.cloud` | 3003 | ✅ Sim | ✅ Sim |
+| Épica Frontend | `epica.sistema.cloud` | 5000 | ✅ Sim | ✅ Sim |
+| Épica Backend | `epica-api.sistema.cloud` | 5001 | ✅ Sim | ❌ Não |
+| IDE Customizada | `ide.sistema.cloud` | 3780 | ✅ Sim | ✅ Sim |
 
-### Adicionar IP autorizado em `authorized_ips.json`:
+### IPs Autorizados (`authorized_ips.json`):
 
 ```json
 {
   "ips": [
     "185.253.70.62",
-    "2804:16d8:dc8b:100:8e37:74ed:a929:6d19",
-    "NOVO_IP_AQUI"
+    "2804:16d8:dc8b:100:8e37:74ed:a929:6d19"
   ]
 }
 ```
 
-Após alterar configurações, reinicie o gateway:
-```bash
-sudo systemctl restart gateway-ngrok
+## 🔧 Fix de CSRF do Grafana
+
+O gateway reescreve automaticamente os headers `Origin` e `Referer` para requisições ao Grafana:
+
 ```
+Origin: https://grafana.sistema.cloud → http://localhost:3003
+Referer: https://grafana.sistema.cloud/d/... → http://localhost:3003/d/...
+```
+
+Isso permite que o Grafana aceite requisições POST através do proxy sem bloqueios de CSRF.
 
 ## 📊 Endpoints Especiais
 
@@ -111,63 +106,70 @@ sudo systemctl restart gateway-ngrok
 
 ### Ver logs em tempo real:
 ```bash
-sudo journalctl -u gateway-ngrok -f
+sudo journalctl -u gateway-cloudflare -f
 ```
 
-### Ver logs filtrados:
-```bash
-# Logs de uma aplicação específica
-sudo journalctl -u gateway-ngrok -f | grep Metabase
+### Exemplo de logs:
+```
+[2025-11-13T00:21:56.242Z] POST grafana.sistema.cloud/api/ds/query
+  → Serviço identificado: Grafana
+  🔍 Grafana: Validando IP 185.253.70.62
+  ✅ Grafana: IP autorizado
+  🔄 Executando proxy para: Grafana
+  🔧 Reescrevendo Origin: https://grafana.sistema.cloud → http://localhost:3003
+  → Proxy: Grafana | POST /api/ds/query → http://localhost:3003/api/ds/query
+  ← Response: Grafana | 200 OK
+```
 
-# Logs de bloqueios
+### Ver bloqueios de IP:
+```bash
 cat blocked_access.log
 ```
 
 ## 🔒 Segurança
 
-### Acesso Local:
-- **Sem validação de IP** (tráfego de localhost)
+### Validação de IP
+
+**Acesso Local** (sem Cloudflare):
+- Sem validação de IP
 - Todas as aplicações acessíveis
 
-### Acesso via Ngrok:
-- **Com validação de IP** (se `ipProtection: true`)
-- IPs não autorizados veem: "Acesso Negado"
+**Acesso via Cloudflare Tunnel**:
+- IP extraído do header `cf-connecting-ip`
+- Se `ipProtection: true`, valida contra `authorized_ips.json`
+- IPs não autorizados recebem: "🔒 Acesso Negado"
 - Bloqueios registrados em `blocked_access.log`
+
+### Logs de Bloqueio
+
+Formato: `[timestamp] BLOCKED: IP -> hostname/path (Service Name)`
+
+Exemplo:
+```
+[2025-11-12T20:15:30.123Z] BLOCKED: 1.2.3.4 -> grafana.sistema.cloud/dashboard (Grafana)
+```
 
 ## 🧪 Testes
 
 ### Testar localmente:
 ```bash
 curl http://localhost:9000/health
-curl http://localhost:9000/metabase
+curl -H "Host: metabase.sistema.cloud" http://localhost:9000/
 ```
 
-### Testar via navegador:
+### Testar via Cloudflare Tunnel:
 ```
-http://localhost:9000/dashboard
-http://localhost:9000/metabase
-```
-
-### Testar via ngrok:
-```
-https://sistemas.ngrok.io/metabase
+https://grafana.sistema.cloud/
+https://metabase.sistema.cloud/
 ```
 
-## 📦 Aplicações Configuradas
+## 🔄 WebSocket
 
-| Aplicação | Path | Porta | Tipo | IP Protection |
-|-----------|------|-------|------|---------------|
-| Metabase | `/metabase` | 3000 | Proxy | ❌ Não |
-| Airbyte | `/` | 8000 | Proxy | ✅ Sim |
-| Grafana | `/grafana` | 3002 | Proxy | ✅ Sim |
-| **Épica** | `/epica` + `/epica-api` | 5001 (API) | **Static + Proxy** | ✅ Sim |
-| IDE | `/IDE` | 3780 | Proxy | ✅ Sim |
-| RPO API | `/rpo-api` | 6000 | Proxy | ❌ Não |
+WebSocket é tratado separadamente via evento `upgrade`:
 
-**Nota sobre Épica**:
-- Frontend servido como build estático em `/epica`
-- Backend proxied em `/epica-api` (porta 5001)
-- Redirect automático de `/epica` para `/epica/` (trailing slash)
+- Validação de IP também aplicada
+- Proxies WebSocket criados com `http-proxy`
+- Suporte para Grafana Live, IDE, Airbyte
 
 ## 🛠️ Desenvolvimento
 
@@ -175,6 +177,7 @@ https://sistemas.ngrok.io/metabase
 - Node.js 18+
 - Express.js
 - http-proxy-middleware
+- http-proxy
 
 ### Instalar dependências:
 ```bash
@@ -182,41 +185,65 @@ npm install
 ```
 
 ### Estrutura do código:
-- Middleware de logging
-- Middleware de validação de IP
-- Criação de proxies por aplicação
-- Ordenação de rotas (específicas primeiro)
-- Health check e dashboard
+1. Criação de proxies HTTP e WebSocket (reusáveis)
+2. Middleware de logging
+3. Middleware de validação de IP
+4. Roteamento por hostname
+5. Handler de WebSocket upgrade
+6. Health check e dashboard
 
-## 📝 Logs
+## 📝 Cloudflare Tunnel
 
-### Formato dos logs:
+### Configuração (~/.cloudflared/config.yml):
+```yaml
+tunnel: <tunnel-id>
+credentials-file: /home/cazouvilela/.cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: metabase.sistema.cloud
+    service: http://localhost:9000
+  - hostname: grafana.sistema.cloud
+    service: http://localhost:9000
+  - hostname: airbyte.sistema.cloud
+    service: http://localhost:9000
+  - hostname: epica.sistema.cloud
+    service: http://localhost:9000
+  - hostname: epica-api.sistema.cloud
+    service: http://localhost:9000
+  - hostname: ide.sistema.cloud
+    service: http://localhost:9000
+  - service: http_status:404
 ```
-[2025-11-02T13:00:00.000Z] GET /metabase
-  ✓ Local access to Metabase
-  → Proxy: Metabase | GET /metabase → http://localhost:3000
-```
 
-### Com bloqueio de IP:
-```
-[2025-11-02T13:00:00.000Z] GET /IDE
-  🔍 Ngrok access to IDE from IP: 1.2.3.4
-  ❌ IP BLOCKED
-```
+Todos os hostnames apontam para o gateway na porta 9000, que então roteia para o serviço correto.
 
-## 🔄 Migração
+## 🚨 Troubleshooting
 
-Para migrar do gateway antigo para este:
-```bash
-/tmp/migrar_para_novo_gateway.sh
-```
+### Grafana retorna 403 em dashboards:
+- Verificar se fix de CSRF está ativo nos logs: `🔧 Reescrevendo Origin`
+- Reiniciar gateway: `sudo systemctl restart gateway-cloudflare`
 
-## 📚 Documentação Completa
+### WebSocket não conecta:
+- Verificar se `websocket: true` no HOSTNAME_MAP
+- Verificar logs: `[WS UPGRADE] hostname/path`
 
-Ver `memory.md` para documentação técnica detalhada e histórico.
+### IP bloqueado indevidamente:
+- Adicionar IP em `authorized_ips.json`
+- Reiniciar gateway
+
+### Serviço retorna 502:
+- Verificar se serviço local está rodando na porta correta
+- Testar com curl: `curl http://localhost:PORTA`
+
+## 📚 Documentação Adicional
+
+- `MIGRACAO_CLOUDFLARE.md`: Histórico de migração do ngrok
+- `TUNEIS_TCP_CLOUDFLARE.md`: Configuração de túneis TCP
+- `.claude/memory.md`: Memória técnica completa
 
 ---
 
 **Porta**: 9000
-**Versão**: 1.0.0
-**Data**: 2025-11-02
+**Modo**: Hostname-based routing
+**Túnel**: Cloudflare Tunnel
+**Última atualização**: 2025-11-12

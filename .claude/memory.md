@@ -1,4 +1,4 @@
-# GATEWAY NGROK - Memória do Projeto
+# GATEWAY LOCAL - Memória do Projeto
 
 <!-- CHAPTER: 0 Configurações da IDE -->
 
@@ -30,509 +30,478 @@ Este projeto utiliza:
 - **Visualização de commits** git com tags
 - **Integração ChatGPT** via Playwright
 
+---
 
-<!-- CHAPTER: 1 Objetivo -->
+<!-- CHAPTER: 1 Visão Geral -->
 
-## Objetivo
+## Visão Geral
 
-Gateway padronizado e simples para rotear tráfego do ngrok para aplicações locais com validação opcional de IP.
+**Projeto descontinuado** em favor da **Arquitetura Híbrida** (Cloudflare + Ngrok).
+
+Este projeto era um gateway Node.js para rotear tráfego ngrok, mas foi **substituído pela combinação de Cloudflare Tunnel (HTTP/HTTPS) + Ngrok TCP** em 2025-11-09.
+
+**Status atual**: 📦 Arquivado (mantido para referência histórica)
+
+**Migração**: Ver [MIGRACAO_CLOUDFLARE.md](../MIGRACAO_CLOUDFLARE.md)
 
 ---
 
-<!-- CHAPTER: 2 Arquitetura Antiga (A SER REMOVIDA) -->
+<!-- CHAPTER: 2 Arquitetura Atual (Híbrida - Cloudflare + Ngrok) -->
 
-## Arquitetura Antiga (A SER REMOVIDA)
+## Arquitetura Atual (Híbrida)
 
-### Nginx na porta 9000
-- **Arquivo**: `/etc/nginx/conf.d/sistemas-consolidado.conf`
-- **Função**: Roteava tráfego para gateway na porta 8079 ou diretamente para aplicações
-- **Cache**: `/var/cache/nginx/` (precisa ser limpo após mudanças)
-- **Comando para limpar cache**: `sudo rm -rf /var/cache/nginx/* && sudo systemctl restart nginx`
+### Melhor dos Dois Mundos
 
-### Gateway Node.js na porta 8079
-- **Arquivo**: `/home/cazouvilela/airbyte-gateway/gateway_completo.js`
-- **Serviço**: `airbyte-gateway.service`
-- **Localização**: `/etc/systemd/system/airbyte-gateway.service`
-- **IPs autorizados**: Hardcoded no arquivo + `/home/cazouvilela/airbyte-gateway/authorized_ips.txt`
-
-### Serviços Systemd Existentes
-1. **airbyte-gateway.service** - Gateway atual (porta 8079)
-2. **ide-customizada.service** - IDE na porta 3780
-3. **epica-frontend.service** - Épica frontend na porta 5000
-4. **epica-backend.service** - Épica backend na porta 5001
-5. **grafana-server.service** - Grafana na porta 3002
-6. **ngrok-*.service** - Múltiplos serviços ngrok (descontinuados)
-
-### Configurações Nginx Relacionadas
-1. `/etc/nginx/conf.d/sistemas-consolidado.conf` - Config principal
-2. `/etc/nginx/conf.d/airbyte-8443.conf` - Config Airbyte antiga
-3. `/etc/nginx/conf.d/metabase.conf` - Config Metabase
-4. `/etc/nginx/conf.d/advanced-optimizations.conf` - Otimizações
-
-### Portas em Uso
-- **3000**: Metabase
-- **3002**: Grafana
-- **3500**: API customizações Metabase
-- **3780**: IDE
-- **5000**: Épica Frontend
-- **5001**: Épica Backend
-- **6000**: RPO Hub API
-- **8000**: Airbyte (Kubernetes/Helm)
-- **8079**: Gateway atual (A SER SUBSTITUÍDO)
-- **9000**: Nginx (A SER REMOVIDO/RECONFIGURADO)
+Combinamos **Cloudflare Tunnel** (HTTP/HTTPS) com **Ngrok TCP** para obter:
+- ✅ Performance máxima em aplicações web (67% mais rápido)
+- ✅ Acesso TCP direto sem instalar nada no cliente
+- ✅ URLs permanentes para ambos
+- ✅ **100% gratuito**
 
 ---
 
-<!-- CHAPTER: 3 Nova Arquitetura (A SER IMPLEMENTADA) -->
+### Cloudflare Tunnel (HTTP/HTTPS) - 7 Aplicações Web
 
-## Nova Arquitetura (A SER IMPLEMENTADA)
+```
+Internet → Cloudflare Tunnel → Aplicações Web (localhost)
+```
 
-### Fluxo Simplificado
+| Aplicação | URL | Porta | Performance |
+|-----------|-----|-------|-------------|
+| RPO Hub API | https://rpo-api.sistema.cloud | 6000 | ~115ms ⚡ |
+| Metabase | https://metabase.sistema.cloud | 3000 | Rápido ⚡ |
+| Airbyte | https://airbyte.sistema.cloud | 8000 | Rápido ⚡ |
+| Grafana | https://grafana.sistema.cloud | 3002 | Rápido ⚡ |
+| Épica Frontend | https://epica.sistema.cloud | 5000 | Rápido ⚡ |
+| Épica Backend | https://epica-api.sistema.cloud | 5001 | Rápido ⚡ |
+| IDE Customizada | https://ide.sistema.cloud | 3780 | Rápido ⚡ |
+
+**Vantagens**:
+- 🚀 67% mais rápido que ngrok (~115ms vs ~350ms)
+- 🔒 SSL automático
+- ♾️ Gratuito ilimitado
+- 🌐 URLs permanentes
+
+**Serviço**: `cloudflared.service` (systemd)
+
+---
+
+### Ngrok TCP - 3 Túneis de Acesso Direto
+
+```
+Cliente (qualquer máquina) → Ngrok TCP → Serviço (localhost)
+```
+
+| Serviço | URL Pública | Porta Local | Uso |
+|---------|-------------|-------------|-----|
+| PostgreSQL | tcp://1.tcp.sa.ngrok.io:20983 | 5432 | pgAdmin, DBeaver, psql |
+| SSH | tcp://1.tcp.sa.ngrok.io:21579 | 2222 | Terminal SSH |
+| NoMachine | tcp://1.tcp.sa.ngrok.io:20997 | 4000 | Remote Desktop |
+
+**Vantagens**:
+- ✅ Acesso direto (sem instalar nada no cliente)
+- ✅ Funciona de qualquer máquina
+- ✅ Configuração simples (IP:porta)
+- ✅ Gratuito para 3 túneis TCP
+
+**Serviço**: `ngrok-consolidado.service` (systemd)
+
+**Como usar**:
+```bash
+# PostgreSQL (de qualquer máquina)
+pgAdmin: Host = 1.tcp.sa.ngrok.io, Port = 20983
+
+# SSH (de qualquer máquina)
+ssh -p 21579 usuario@1.tcp.sa.ngrok.io
+
+# NoMachine (de qualquer máquina)
+Host = 1.tcp.sa.ngrok.io, Port = 20997
+```
+
+---
+
+<!-- CHAPTER: 3 Por Que Arquitetura Híbrida? -->
+
+## Por Que Arquitetura Híbrida?
+
+### Cloudflare TCP Foi Descartado
+
+**Problema identificado** (2025-11-09 15:35):
+
+Cloudflare Tunnel TCP **requer cloudflared instalado no cliente**:
+
+```bash
+# Cliente PRECISA rodar:
+cloudflared access tcp --hostname postgres.sistema.cloud --url localhost:15432
+
+# Depois conectar em localhost
+pgAdmin: localhost:15432
+```
+
+**Limitações**:
+- ❌ Precisa instalar cloudflared em cada máquina cliente
+- ❌ Precisa rodar comando antes de conectar
+- ❌ Não funciona de qualquer lugar
+- ❌ Complexo para usuários finais
+
+**Ngrok TCP é superior para acesso direto**:
+- ✅ Acesso direto: `1.tcp.sa.ngrok.io:20983`
+- ✅ Zero instalação no cliente
+- ✅ Funciona de qualquer máquina
+- ✅ Simples de usar
+
+### Decisão Final
+
+| Tipo | Solução | Motivo |
+|------|---------|--------|
+| **HTTP/HTTPS** | Cloudflare | 67% mais rápido, URLs permanentes |
+| **TCP** | Ngrok | Acesso direto sem cliente |
+
+---
+
+<!-- CHAPTER: 4 Problemas Resolvidos -->
+
+## Problemas Resolvidos na Migração
+
+### 1. Airbyte - Pods em Restart Loop (2025-11-09 15:00)
+
+**Sintoma**: Erro `connection reset by peer` nos logs do Cloudflare
+
+**Causa**: Pods do Kubernetes estavam se recuperando após reboot do sistema
+
+**Solução**: **Nenhuma intervenção necessária** - recuperação automática em ~10 minutos
+
+**Status**: ✅ Resolvido automaticamente
+
+**Lição**: Airbyte leva alguns minutos para estabilizar após reboot (comportamento normal do Kubernetes)
+
+### 2. Metabase - Connection Refused PostgreSQL (2025-11-09 15:10)
+
+**Sintoma**: `Connection to host.docker.internal:5432 refused`
+
+**Causa**: PostgreSQL escutando apenas em `127.0.0.1`, mas Metabase em container Docker
+
+**Solução**: Script `/tmp/corrigir_metabase_postgres.sh`
+- Configurou `listen_addresses = 'localhost,172.17.0.1'`
+- Adicionou regra `pg_hba.conf` para rede Docker (172.17.0.0/16)
+- Reiniciou PostgreSQL e container Metabase
+
+**Status**: ✅ Resolvido em 2025-11-09 15:11
+
+**Script de correção**: `/tmp/corrigir_metabase_postgres.sh` (executado com sucesso)
+
+### 3. Cloudflare TCP Limitação (2025-11-09 15:35)
+
+**Sintoma**: PostgreSQL via Cloudflare requer cloudflared no cliente
+
+**Causa**: Arquitetura do Cloudflare Tunnel TCP (não é acesso direto)
+
+**Solução**: **Manter Ngrok para TCP** (arquitetura híbrida)
+
+**Status**: ✅ Resolvido com arquitetura híbrida
+
+**Lição**: Cloudflare excelente para HTTP/HTTPS, mas Ngrok superior para TCP direto
+
+---
+
+<!-- CHAPTER: 5 Serviços Ativos -->
+
+## Serviços Ativos
+
+### Serviços Systemd
+
+```bash
+# Túnel Cloudflare (HTTP/HTTPS)
+systemctl status cloudflared
+
+# Túnel Ngrok (TCP)
+systemctl status ngrok-consolidado
+
+# Aplicações
+systemctl status ide-customizada       # IDE (porta 3780)
+systemctl status epica-frontend        # Épica frontend (porta 5000)
+systemctl status epica-backend         # Épica backend (porta 5001)
+systemctl status grafana-server        # Grafana (porta 3002)
+systemctl status rpo-api               # RPO API (porta 6000)
+systemctl status postgresql-17         # PostgreSQL (porta 5432)
+```
+
+### Containers Docker
+
+```bash
+docker ps | grep metabase              # Metabase (porta 3000)
+```
+
+### Kubernetes/Kind (Airbyte)
+
+```bash
+kubectl get pods -n airbyte            # Pods do Airbyte
+kubectl get svc -n airbyte             # Serviços (NodePort 30000→8000)
+```
+
+**Airbyte**: Rodando via Kind (Kubernetes local)
+- NodePort `30000` mapeado para porta `8000` do host
+- Container `airbyte-control-plane` faz o mapeamento: `0.0.0.0:8000->30000/tcp`
+
+---
+
+<!-- CHAPTER: 6 Portas em Uso -->
+
+## Portas em Uso
+
+| Porta | Serviço | Tipo | Status |
+|-------|---------|------|--------|
+| 3000 | Metabase | Container Docker | ✅ Ativo |
+| 3002 | Grafana | Systemd | ✅ Ativo |
+| 3780 | IDE Customizada | Systemd | ✅ Ativo |
+| 5000 | Épica Frontend | Systemd | ✅ Ativo |
+| 5001 | Épica Backend | Systemd | ✅ Ativo |
+| 5432 | PostgreSQL 17 | Systemd | ✅ Ativo |
+| 6000 | RPO Hub API | Systemd | ✅ Ativo |
+| 8000 | Airbyte | Kubernetes (NodePort 30000) | ✅ Ativo |
+
+**Portas descontinuadas**:
+- ~~8079~~ - Gateway Node.js antigo (descontinuado)
+- ~~9000~~ - Nginx antigo (descontinuado)
+
+---
+
+<!-- CHAPTER: 7 Configurações -->
+
+## Configurações
+
+### Cloudflare Tunnel
+
+**Arquivo**: `~/.cloudflared/config.yml`
+
+```yaml
+tunnel: a986fd02-432d-42e7-832c-b20f483417ff
+credentials-file: /home/cazouvilela/.cloudflared/a986fd02-432d-42e7-832c-b20f483417ff.json
+
+ingress:
+  - hostname: rpo-api.sistema.cloud
+    service: http://localhost:6000
+  - hostname: metabase.sistema.cloud
+    service: http://localhost:3000
+  - hostname: airbyte.sistema.cloud
+    service: http://localhost:8000
+  - hostname: grafana.sistema.cloud
+    service: http://localhost:3002
+  - hostname: epica.sistema.cloud
+    service: http://localhost:5000
+  - hostname: epica-api.sistema.cloud
+    service: http://localhost:5001
+  - hostname: ide.sistema.cloud
+    service: http://localhost:3780
+  - service: http_status:404
+```
+
+**Comandos úteis**:
+```bash
+systemctl status cloudflared
+journalctl -u cloudflared -f
+sudo systemctl restart cloudflared
+```
+
+---
+
+### Ngrok TCP
+
+**Arquivo**: `~/.config/ngrok/ngrok.yml`
+
+```yaml
+version: 2
+authtoken: 2vHAVcubxxPAxlrX4aFvaiARSbe_6bH6CqGS1cdtF27Bj2MYK
+region: us
+
+tunnels:
+  postgresql:
+    proto: tcp
+    addr: 5432
+    remote_addr: 1.tcp.sa.ngrok.io:20983
+
+  ssh:
+    proto: tcp
+    addr: 2222
+    remote_addr: 1.tcp.sa.ngrok.io:21579
+
+  nomachine:
+    proto: tcp
+    addr: 4000
+    remote_addr: 1.tcp.sa.ngrok.io:20997
+```
+
+**Comandos úteis**:
+```bash
+systemctl status ngrok-consolidado
+journalctl -u ngrok-consolidado -f
+curl http://localhost:4040/api/tunnels | jq  # Ver URLs ativas
+```
+
+---
+
+<!-- CHAPTER: 8 Performance -->
+
+## Performance - Cloudflare vs Ngrok
+
+### Teste HTTP POST (RPO Hub API)
+
+**Cloudflare Tunnel**:
+- Latência média: ~115ms
+- Mínima: 104ms
+- Máxima: 132ms
+- Execução API (Valkey): 0-10ms
+
+**Ngrok HTTP (anterior)**:
+- Latência média: ~350ms
+
+**Melhoria**: 🚀 **67% mais rápido** (de 350ms para 115ms)
+
+### Características Técnicas
+
+**Cloudflare**:
+- Protocolo: QUIC (mais eficiente que HTTP/2)
+- SSL: Automático via Cloudflare (modo Flexible)
+- Conexões: 4 redundantes (gig02, gig09, gig10, gig11)
+- DNS: Propagação instantânea
+- Custo: $0.00 (100% gratuito ilimitado)
+
+**Ngrok TCP**:
+- Protocolo: TCP direto
+- Conexões: Acesso direto sem proxy
+- URLs: tcp://1.tcp.sa.ngrok.io:porta
+- Custo: $0.00 (até 3 túneis TCP)
+
+---
+
+<!-- CHAPTER: 9 Migração Apps Script -->
+
+## Migração Apps Script (RPO-V4)
+
+### Arquivos Alterados
+
+1. `SETUP/setup_StatusAPI.gs`:
+   - **Antes**: `https://sistemas.ngrok.io/rpo-api`
+   - **Depois**: `https://rpo-api.sistema.cloud`
+
+2. `EFEITOS/EFEITO_atualiza_campos_candidatos_historico_API.gs`:
+   - **Antes**: `https://sistemas.ngrok.io/rpo-api`
+   - **Depois**: `https://rpo-api.sistema.cloud`
+
+3. `EFEITOS/HELPERS_GERAIS_GATILHOS_EFEITOS.gs`:
+   - **Antes**: `https://sistemas.ngrok.io/rpo-api`
+   - **Depois**: `https://rpo-api.sistema.cloud`
+
+**Status**: ✅ Migrado e em produção desde 2025-11-09
+
+---
+
+<!-- CHAPTER: 10 Arquitetura Antiga (Histórico) -->
+
+## Arquitetura Antiga (Histórico)
+
+**⚠️ Esta seção é apenas para referência histórica. A arquitetura abaixo foi descontinuada.**
+
+### Fluxo Antigo (Descontinuado)
 ```
 Internet
    ↓
-ngrok (sistemas.ngrok.io)
+ngrok (sistemas.ngrok.io) [Latência: ~200ms]
    ↓
-Gateway Node.js (porta única - TBD)
-   ↓
-Middleware de IP (opcional por aplicação)
+Gateway Node.js (porta 9000) [Latência: +150ms]
    ↓
 Aplicação Local (localhost:porta)
 ```
 
-### Gateway Padronizado
-- **Localização**: `/home/cazouvilela/projetos/gateway_ngrok/`
-- **Arquivo principal**: `gateway.js`
-- **Configuração**: `config.json`
-- **IPs autorizados**: `authorized_ips.json`
+**Total de latência**: ~350ms
 
-### Aplicações Configuradas
+**Problemas**:
+- ❌ Alta latência (2 camadas)
+- ❌ URL ngrok mudava frequentemente
+- ❌ Complexidade (gateway + nginx + ngrok)
+- ❌ Configuração manual de paths (`/metabase`, `/grafana`, etc)
+- ❌ Necessidade de pathRewrite e customizações por app
 
-#### Sem Proteção de IP
-1. **Metabase**
-   - Path: `/metabase`
-   - Porta: `3000`
-   - Local: Instalação sistema
+### Gateway Node.js (Descontinuado)
 
-2. **RPO Hub API**
-   - Path: `/rpo-api`
-   - Porta: `6000`
-   - Local: `/home/cazouvilela/projetos/RPO_V4`
-   - Obs: Já tem proteção por token
+**Localização**: `/home/cazouvilela/projetos/gateway_local/gateway.js`
+**Configuração**: `config.json`
+**Status**: 📦 Arquivado
 
-#### Com Proteção de IP
-1. **Airbyte**
-   - Path: `/` (raiz)
-   - Porta: `8000`
-   - Local: Kubernetes/Helm
-   - IPs: 185.253.70.62, 2804:16d8:dc8b:100:8e37:74ed:a929:6d19
+**Funcionalidades que tinha**:
+- Roteamento por path (`/metabase` → porta 3000)
+- Validação de IP opcional
+- Suporte WebSocket
+- Path rewriting
+- Tipo "static-proxy" para apps React
 
-2. **Grafana**
-   - Path: `/grafana`
-   - Porta: `3002`
-   - Local: Sistema (grafana-server)
-   - IPs: 185.253.70.62, 2804:16d8:dc8b:100:8e37:74ed:a929:6d19
-
-3. **Épica**
-   - Path Frontend: `/epica`
-   - Path Backend: `/epica-api`
-   - Porta: `5001` (Backend)
-   - Local: `/home/cazouvilela/projetos/epica`
-   - IPs: 185.253.70.62, 2804:16d8:dc8b:100:8e37:74ed:a929:6d19
-   - Tipo: **Static + Proxy** (frontend buildado + backend API)
-   - Obs: Frontend servido como build estático, backend proxied para porta 5001
-
-4. **IDE**
-   - Path: `/IDE`
-   - Porta: `3780`
-   - Local: `/home/cazouvilela/projetos/IDE_customizada`
-   - IPs: 185.253.70.62, 2804:16d8:dc8b:100:8e37:74ed:a929:6d19
-
-### IPs Autorizados Iniciais
-1. **IPv4**: `185.253.70.62`
-2. **IPv6**: `2804:16d8:dc8b:100:8e37:74ed:a929:6d19`
+**Por que foi descontinuado**:
+- Cloudflare Tunnel faz tudo isso melhor e mais rápido
+- Subdomínios são mais simples que paths
+- Nenhuma configuração necessária nas aplicações
+- Performance superior
 
 ---
 
-<!-- CHAPTER: 4 Tarefas de Limpeza -->
+<!-- CHAPTER: 11 Documentação Adicional -->
 
-## Tarefas de Limpeza
+## Documentação Adicional
 
-### 1. Parar Serviços Antigos
-```bash
-sudo systemctl stop airbyte-gateway
-sudo systemctl disable airbyte-gateway
-sudo systemctl stop nginx
-```
+**Arquivos importantes**:
+- [MIGRACAO_CLOUDFLARE.md](../MIGRACAO_CLOUDFLARE.md) - Documentação completa da migração
+- [TUNEIS_TCP_CLOUDFLARE.md](../TUNEIS_TCP_CLOUDFLARE.md) - Tentativa de TCP no Cloudflare (descartada)
+- `/tmp/CLOUDFLARE_VS_NGROK_TCP.md` - Comparação detalhada
+- `/tmp/corrigir_metabase_postgres.sh` - Script de correção do PostgreSQL
+- `~/.cloudflared/config.yml` - Configuração do túnel Cloudflare
+- `~/.config/ngrok/ngrok.yml` - Configuração do túnel Ngrok
 
-### 2. Limpar Cache Nginx
-```bash
-sudo rm -rf /var/cache/nginx/*
-```
+**Cloudflare Dashboard**: https://dash.cloudflare.com
+**Domínio**: `sistema.cloud`
+**Tunnel ID**: `a986fd02-432d-42e7-832c-b20f483417ff`
 
-### 3. Backup Configurações Antigas
-```bash
-sudo cp /etc/nginx/conf.d/sistemas-consolidado.conf /etc/nginx/conf.d/sistemas-consolidado.conf.old
-```
-
-### 4. Remover/Renomear Serviços Antigos
-- Desabilitar ngrok-*.service
-- Renomear airbyte-gateway.service
+**Ngrok Dashboard**: https://dashboard.ngrok.com
+**Túneis TCP**: PostgreSQL, SSH, NoMachine
 
 ---
 
-<!-- CHAPTER: 5 Princípios do Novo Gateway -->
+<!-- CHAPTER: 12 Histórico de Mudanças -->
 
-## Princípios do Novo Gateway
+## Histórico de Mudanças
 
-1. **Simplicidade**: Configuração centralizada em JSON
-2. **Padronização**: Todas as apps seguem o mesmo padrão
-3. **Extensibilidade**: Fácil adicionar novas aplicações
-4. **Clareza**: Código limpo e bem documentado
-5. **Manutenibilidade**: Uma única fonte de verdade
+### 2025-11-09 15:40 - Arquitetura Híbrida Implementada
+- ✅ Removidos túneis TCP do Cloudflare (limitação de acesso direto)
+- ✅ Mantido Ngrok apenas para TCP (PostgreSQL, SSH, NoMachine)
+- ✅ Removido túnel HTTP do Ngrok (migrado para Cloudflare)
+- ✅ Arquitetura híbrida: Cloudflare (HTTP) + Ngrok (TCP)
+- ✅ 100% funcional e gratuito
 
----
+### 2025-11-09 15:11 - Metabase Corrigido
+- ✅ Corrigido acesso PostgreSQL para container Docker
+- ✅ Script `/tmp/corrigir_metabase_postgres.sh` executado com sucesso
+- ✅ Metabase funcionando via https://metabase.sistema.cloud
 
-<!-- CHAPTER: 6 Notas Importantes -->
+### 2025-11-09 15:05 - Airbyte Estabilizado
+- ✅ Pods Kubernetes recuperados automaticamente após reboot
+- ✅ Airbyte funcionando via https://airbyte.sistema.cloud
+- ℹ️ Nenhuma intervenção manual necessária
 
-## Notas Importantes
+### 2025-11-09 14:56 - Cloudflare Tunnel Ativado
+- ✅ Cloudflare Tunnel configurado como serviço systemd
+- ✅ 7 subdomínios criados e testados
+- ✅ Túnel rodando com 4 conexões redundantes
 
-### Cache do Nginx
-- O Nginx tem cache ativo em `/var/cache/nginx/`
-- Sempre limpar cache após mudanças: `sudo rm -rf /var/cache/nginx/* && sudo systemctl restart nginx`
-- O cache pode causar comportamento inconsistente se não limpo
+### 2025-11-09 13:00 - Início da Migração
+- 📝 Documentação criada: MIGRACAO_CLOUDFLARE.md
+- 🧪 Testes de performance realizados
+- 🚀 Performance: 67% mais rápido que ngrok
 
-### Acesso Local vs Ngrok
-- **Local**: Sem validação de IP (localhost)
-- **Ngrok**: Com validação de IP baseada em `x-forwarded-for`
-
-### WebSocket Support
-- Todas as apps precisam de suporte a WebSocket
-- Headers necessários: `Upgrade`, `Connection: upgrade`
-
----
-
----
-
-<!-- CHAPTER: 7 Customizações Necessárias por Aplicação -->
-
-## Customizações Necessárias por Aplicação
-
-### Princípio Geral
-O gateway é padronizado, mas **algumas aplicações precisam saber em qual path estão rodando** para:
-- Gerar redirects corretos
-- Criar links internos corretos
-- Funcionar em subpaths
-
-**Divisão de Responsabilidades:**
-- **Gateway** (`config.json`): Define ONDE rotear (`/grafana` → porta 3002)
-- **Aplicação** (config próprio): Define SEU endereço base para redirects internos
+### 2025-11-03 - Gateway Node.js (Última Versão)
+- Versão final do gateway antes da migração
+- Todas as apps funcionando (Airbyte, Grafana, Metabase, Épica, IDE, RPO)
+- Arquitetura complexa: ngrok → nginx → gateway → apps
 
 ---
 
-### 1. Metabase (SEM customizações)
-
-**Gateway** (`config.json`):
-```json
-{
-  "name": "Metabase",
-  "path": "/metabase",
-  "target": "http://localhost:3000",
-  "pathRewrite": true,        ← Remove /metabase antes de enviar
-  "ipProtection": false,
-  "websocket": true
-}
-```
-
-**Metabase**: Nenhuma configuração necessária
-- pathRewrite=true faz Metabase receber `/` ao invés de `/metabase/`
-- Metabase não precisa saber que está em subpath
-
----
-
-### 2. Grafana (PRECISA root_url + serve_from_sub_path)
-
-**Gateway** (`config.json`):
-```json
-{
-  "name": "Grafana",
-  "path": "/grafana",
-  "target": "http://localhost:3002",
-  "pathRewrite": false,       ← Mantém /grafana
-  "ipProtection": true,
-  "websocket": true
-}
-```
-
-**Grafana** (`/etc/grafana/grafana.ini`):
-```ini
-[server]
-root_url = /grafana           ← NECESSÁRIO para gerar redirects corretos
-serve_from_sub_path = true    ← NECESSÁRIO para aceitar /grafana no path
-```
-
-**Por quê ambos são necessários?**
-- `pathRewrite=false`: Gateway envia `/grafana/...` completo para Grafana
-- `root_url = /grafana`: Grafana sabe seu endereço e **gera** redirects como `/grafana/login`
-- `serve_from_sub_path = true`: Grafana **aceita** requisições com `/grafana` no path
-- **SEM root_url**: Grafana gera redirect `/login` (sem prefixo) → cai no Airbyte (raiz)
-- **SEM serve_from_sub_path**: Grafana recebe `/grafana/login` mas retorna 404 (`handler=notfound`) → loop
-
-**Configuração:**
-```bash
-# Script automático (recomendado)
-sudo /tmp/ativar_serve_from_sub_path.sh
-
-# Ou manual:
-sudo nano /etc/grafana/grafana.ini
-# Adicionar/modificar na seção [server]:
-# root_url = /grafana
-# serve_from_sub_path = true
-sudo systemctl restart grafana-server
-```
-
-**Backups:**
-- Backup criado automaticamente antes de cada mudança
-- Localização: `/etc/grafana/grafana.ini.backup-TIMESTAMP`
-
-**Referência:**
-- Documentação Oficial: https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/#serve_from_sub_path
-- Script de configuração: `/tmp/ativar_serve_from_sub_path.sh`
-
----
-
-### 3. Airbyte (LIMITAÇÃO TÉCNICA - Deve estar na raiz)
-
-**Gateway** (`config.json`):
-```json
-{
-  "name": "Airbyte",
-  "path": "/",                ← OBRIGATÓRIO: Raiz (limitação do Airbyte)
-  "target": "http://localhost:8000",
-  "pathRewrite": false,
-  "ipProtection": true,
-  "websocket": true
-}
-```
-
-**Airbyte**: Nenhuma configuração de subpath disponível
-- **DEVE** rodar na raiz `/` por limitação técnica
-- **NÃO possui** configuração equivalente ao `root_url` do Grafana
-- Assets hardcoded desde raiz (`/assets/`, `/logo.png`)
-- Kubernetes/Helm gerencia configurações (NodePort 8000 → 30000)
-
-**Por quê na raiz?**
-- Airbyte webapp **assume que está sempre na raiz `/`**
-- Assets e rotas internas usam paths absolutos desde a raiz
-- **Limitação conhecida** há 4 anos (Issues GitHub #8167, #48595)
-- Workarounds com nginx rewrite são complexos e não confiáveis
-
-**Tentativa de usar subpath:**
-- ❌ Assets quebram: `/airbyte/` tenta buscar `/assets/` (sem prefixo)
-- ❌ Rotas internas falham: API calls usam paths absolutos
-- ❌ Frontend React não tem suporte a base path configurável
-
-**Versão instalada:**
-- Helm Chart: 1.9.1
-- Airbyte: 2.0.1 (novembro 2024)
-
-**Referências:**
-- Issue #8167 (2021): "Could you please provide configurable base url?" - Fechada como low priority
-- Issue #48595 (2024): Mesmo problema, **ainda aberta** em 2025
-- Discussão: https://discuss.airbyte.io/t/setting-subpath-for-airbyte-url/9142
-
-**Conclusão:** Não é escolha de arquitetura, é **limitação técnica do próprio Airbyte**. A aplicação não foi projetada para rodar em subpath.
-
----
-
-### 4. IDE (FUNCIONA PERFEITAMENTE)
-
-**Gateway** (`config.json`):
-```json
-{
-  "name": "IDE",
-  "path": "/IDE",
-  "target": "http://localhost:3780",
-  "pathRewrite": true,        ← Remove /IDE antes de enviar
-  "ipProtection": true,
-  "websocket": true
-}
-```
-
-**IDE** (configurado corretamente):
-- ✅ Proteção de IP removida do código (já no gateway)
-- ✅ BASE_PATH detection implementado em `public/app.js`
-  - Detecta via `window.location.pathname`
-  - Se path começa com `/IDE/`, adiciona prefixo em todas as requisições
-- ✅ WebSocket configurado corretamente com BASE_PATH
-- ✅ Referências ao gateway antigo atualizadas
-- ✅ Documentação README.md atualizada
-
-**Funcionamento:**
-- Frontend detecta `/IDE/` do browser
-- Gateway recebe `/IDE/...` e envia `/...` para backend
-- Express serve arquivos static da raiz
-- WebSocket funciona corretamente
-- Tanto localhost quanto ngrok funcionando
-
-**Status**: ✅ Funcionando perfeitamente (localhost e ngrok)
-
----
-
-### 5. Épica (TIPO ESPECIAL: Static + Proxy)
-
-**Gateway** (`config.json`):
-```json
-{
-  "name": "Épica",
-  "path": "/epica",
-  "type": "static-proxy",           ← Tipo especial
-  "staticPath": "/home/cazouvilela/projetos/epica/frontend/build",
-  "target": "http://localhost:5001",
-  "apiPath": "/epica-api",
-  "pathRewrite": true,
-  "ipProtection": true,
-  "websocket": false
-}
-```
-
-**Como Funciona o Static + Proxy:**
-
-1. **Frontend (Static)**:
-   - Build React servido como arquivos estáticos em `/epica`
-   - Buildado com `homepage: "/epica"` no package.json
-   - Gateway serve diretamente do disco (não há servidor na porta 5000)
-   - Path rewriting: `/epica/static/js/main.js` → serve arquivo do build
-
-2. **Backend (Proxy)**:
-   - API Node.js na porta 5001
-   - Acessível via `/epica-api`
-   - Roteamento normal de proxy reverso
-
-3. **Trailing Slash Redirect**:
-   - Gateway implementa redirect automático 301
-   - `/epica` → `/epica/` (necessário para React Router)
-   - React Router com `basename="/epica"` requer trailing slash
-
-**Detecção Dinâmica de API URL** (`frontend/src/config/api.js`):
-```javascript
-const getApiUrl = () => {
-  const hostname = window.location.hostname;
-  const port = window.location.port;
-
-  // Se está acessando via gateway (porta 9000)
-  if (port === '9000') {
-    return window.location.origin + '/epica-api';
-  }
-
-  // Se é ngrok
-  if (hostname.includes('ngrok.io')) {
-    return window.location.origin + '/epica-api';
-  }
-
-  return window.location.origin + '/api';
-};
-```
-
-**OAuth Universal** (funciona em localhost e ngrok):
-- Detecção automática de origem via HTTP headers
-- Callback fixo no Google (ngrok)
-- Redirect dinâmico ao usuário (localhost ou ngrok)
-- Ver documentação completa em `/home/cazouvilela/projetos/epica/memory.md`
-
-**Épica** (configurações):
-- ✅ Frontend `.env`: Sem `REACT_APP_API_URL` (detecção automática)
-- ✅ Backend `.env`: Callback ngrok fixo, frontend URL detectada dinamicamente
-- ✅ React `package.json`: `"homepage": "/epica"`
-- ✅ Build servido pelo gateway (sem servidor dedicado)
-
-**Status**: ✅ Funcionando perfeitamente (localhost e ngrok)
-
----
-
-### 6. RPO Hub API (SEM customizações)
-
-**Gateway** (`config.json`):
-```json
-{
-  "name": "RPO Hub API",
-  "path": "/rpo-api",
-  "target": "http://localhost:6000",
-  "pathRewrite": true,
-  "ipProtection": false,      ← Já tem proteção por token
-  "websocket": false
-}
-```
-
-**RPO API**: Nenhuma configuração necessária
-- Já tem autenticação por token própria
-- pathRewrite=true remove `/rpo-api` antes de enviar
-
----
-
-<!-- CHAPTER: 8 Tabela Resumo de Customizações -->
-
-## Tabela Resumo de Customizações
-
-| Aplicação | Path | Tipo | pathRewrite | ipProtection | Customização App | Status |
-|-----------|------|------|-------------|--------------|------------------|--------|
-| **Metabase** | /metabase | Proxy | true | false | Nenhuma | ✅ Funciona |
-| **Grafana** | /grafana | Proxy | false | true | root_url + serve_from_sub_path | ✅ Funciona |
-| **Airbyte** | / (raiz) | Proxy | false | true | Nenhuma (limitação técnica) | ✅ Funciona |
-| **Épica** | /epica + /epica-api | Static+Proxy | true | true | OAuth Universal + API detection | ✅ Funciona |
-| **IDE** | /IDE | Proxy | true | true | BASE_PATH detection + WebSocket | ✅ Funciona |
-| **RPO API** | /rpo-api | Proxy | true | false | Nenhuma | ⏳ Testar |
-
-**Legenda:**
-- ✅ Funciona: Testado e funcionando corretamente
-- ⏳ Testar: Configurado mas pendente teste
-- ⏳ Revisar: Precisa revisão de código legado
-
----
-
-<!-- CHAPTER: 9 Histórico -->
-
-## Histórico
-
-- **2025-11-03 22:10**: Corrigido suporte a WebSocket via ngrok
-  - Adicionado handler de 'upgrade' event no servidor HTTP
-  - WebSocket agora funciona corretamente via ngrok com validação de IP
-  - IDE testada e funcionando perfeitamente em localhost e ngrok
-- **2025-11-03 21:50**: IDE migrada para novo gateway com sucesso
-  - Proteção de IP removida do código e delegada ao gateway
-  - BASE_PATH detection já estava implementado
-  - WebSocket funcionando corretamente via gateway
-  - Documentação README.md atualizada
-  - Funciona perfeitamente em localhost e ngrok
-- **2025-11-03 20:00**: Épica OAuth Universal implementado e funcionando perfeitamente
-  - Detecção automática de origem (localhost ou ngrok)
-  - Callback fixo Google + redirect dinâmico ao usuário
-  - Solução para TokenError: Bad Request
-  - Frontend .env sem REACT_APP_API_URL (detecção automática)
-- **2025-11-03 18:00**: Implementado tipo "static-proxy" para aplicações React
-  - Frontend servido como build estático
-  - Backend proxied separadamente
-  - Épica migrado para static-proxy (eliminou servidor porta 5000)
-- **2025-11-03 17:30**: Implementado redirect automático de trailing slash (301)
-  - Necessário para React Router com basename
-  - `/epica` → `/epica/` automático
-- **2025-11-02 17:40**: Airbyte confirmado funcionando (limitação técnica documentada - deve estar na raiz)
-- **2025-11-02 17:35**: Grafana corrigido com root_url + serve_from_sub_path = true
-- **2025-11-02 14:00**: Descoberta limitação do Grafana: serve_from_sub_path necessário
-- **2025-11-02 14:00**: Metabase funcionando sem customizações
-- **2025-11-02 13:57**: Gateway migrado e ativo na porta 9000
-- **2025-11-02 13:00**: Criação do projeto gateway_ngrok para reimplementação limpa
-- **Anterior**: Gateway complexo com nginx + node.js em múltiplas portas
-
----
-
-<!-- CHAPTER: 10 Organização de Documentação -->
-
-## Organização de Documentação
-
-**IMPORTANTE**: Toda a documentação deste projeto deve ser armazenada na pasta `/documentacao`.
-
-- **README.md** (raiz do projeto): Contém apenas informações gerais e orientação para `/documentacao`
-- **memory.md** (`.claude/`): Este arquivo - para carregamento rápido de contexto do Claude
-- **Demais documentos**: Devem estar em `/documentacao` (arquitetura, guias, especificações, etc.)
-
+**Última Atualização**: 2025-11-09 15:40
+**Versão**: Arquitetura Híbrida 1.0
+**Status**: ✅ Em produção (7 apps HTTP + 3 túneis TCP funcionando)

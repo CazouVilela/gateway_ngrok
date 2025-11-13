@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * Gateway Local Padronizado
+ * Gateway Local - HOSTNAME-BASED (Cloudflare Tunnel)
  *
- * Arquitetura simples:
- * - Configuração centralizada em config.json
- * - Validação opcional de IP por aplicação
- * - Suporte a WebSocket
- * - Path rewriting opcional
+ * Roteamento por subdomínio:
+ * - metabase.sistema.cloud → localhost:3000
+ * - grafana.sistema.cloud → localhost:3003
+ * - airbyte.sistema.cloud → localhost:8000
+ * - etc
  *
- * NOTA: RPO Hub API foi migrado para ngrok direto (api-sistema.ngrok.io)
- * e não usa mais este gateway. API tem segurança própria via token.
+ * Com validação de IP via Cloudflare (CF-Connecting-IP)
  */
 
 const express = require('express');
@@ -19,173 +18,230 @@ const fs = require('fs');
 const path = require('path');
 
 // ===== CARREGAR CONFIGURAÇÕES =====
-const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 const authorizedIPs = JSON.parse(fs.readFileSync(path.join(__dirname, 'authorized_ips.json'), 'utf8'));
 
 const app = express();
-const PORT = config.gateway.port;
+const PORT = 9000;
 
-console.log('==========================================');
-console.log('🚀 Gateway Padronizado - Ngrok');
-console.log('==========================================');
-console.log(`Porta: ${PORT}`);
-console.log(`Domínio: ${config.gateway.ngrokDomain}`);
-console.log(`IPs Autorizados: ${authorizedIPs.ips.length}`);
-authorizedIPs.ips.forEach(ip => console.log(`  ✓ ${ip}`));
-console.log('==========================================\n');
+// ===== MAPEAMENTO DE HOSTNAMES → SERVIÇOS =====
+const HOSTNAME_MAP = {
+  'metabase.sistema.cloud': {
+    name: 'Metabase',
+    target: 'http://localhost:3000',
+    ipProtection: false,
+    websocket: true
+  },
+  'airbyte.sistema.cloud': {
+    name: 'Airbyte',
+    target: 'http://localhost:8000',
+    ipProtection: true,
+    websocket: true
+  },
+  'grafana.sistema.cloud': {
+    name: 'Grafana',
+    target: 'http://localhost:3003',
+    ipProtection: true,
+    websocket: true
+  },
+  'epica.sistema.cloud': {
+    name: 'Épica Frontend',
+    target: 'http://localhost:5000',
+    ipProtection: true,
+    websocket: true
+  },
+  'epica-api.sistema.cloud': {
+    name: 'Épica Backend',
+    target: 'http://localhost:5001',
+    ipProtection: true,
+    websocket: false
+  },
+  'ide.sistema.cloud': {
+    name: 'IDE Customizada',
+    target: 'http://localhost:3780',
+    ipProtection: true,
+    websocket: true
+  }
+};
 
-// ===== MIDDLEWARE DE LOGGING =====
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path}`);
-  next();
-});
+// ===== CRIAR PROXIES UMA VEZ (REUTILIZÁVEIS) =====
+const HTTP_PROXIES = {};
+const WS_PROXIES = {};
 
-// ===== MIDDLEWARE DE VALIDAÇÃO DE IP =====
-function createIPValidationMiddleware(appName) {
-  return (req, res, next) => {
-    const host = req.get('host') || '';
-
-    // Acesso local: sempre permitir
-    if (!host.includes(config.gateway.ngrokDomain)) {
-      console.log(`  ✓ Local access to ${appName}`);
-      return next();
-    }
-
-    // Via ngrok: validar IP
-    const forwardedFor = req.get('x-forwarded-for') || '';
-    const clientIP = forwardedFor.split(',')[0].trim();
-
-    console.log(`  🔍 Ngrok access to ${appName} from IP: ${clientIP}`);
-
-    if (authorizedIPs.ips.includes(clientIP)) {
-      console.log(`  ✅ IP authorized`);
-      return next();
-    }
-
-    // Bloquear
-    console.log(`  ❌ IP BLOCKED`);
-
-    // Log do bloqueio
-    const logEntry = `[${new Date().toISOString()}] BLOCKED: ${clientIP} -> ${host}${req.path} (${appName})\n`;
-    fs.appendFileSync(path.join(__dirname, 'blocked_access.log'), logEntry);
-
-    res.status(403).send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Acesso Negado</title>
-        <style>
-          body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: #f5f5f5;
-          }
-          h1 {
-            color: #d32f2f;
-            font-size: 2em;
-          }
-        </style>
-      </head>
-      <body>
-        <h1>🔒 Acesso Negado</h1>
-      </body>
-      </html>
-    `);
-  };
-}
-
-// ===== CRIAR PROXY PARA CADA APLICAÇÃO =====
-function createApplicationProxy(app, filterFn = null) {
-  const proxyOptions = {
-    target: app.target,
+Object.entries(HOSTNAME_MAP).forEach(([hostname, service]) => {
+  // Proxy HTTP (SEM websocket)
+  HTTP_PROXIES[hostname] = createProxyMiddleware({
+    target: service.target,
     changeOrigin: true,
-    ws: false, // WebSocket upgrades are handled manually in server.on('upgrade')
-    pathRewrite: app.pathRewrite ? { [`^${app.path}`]: '' } : undefined,
+    ws: false, // DESABILITADO - WebSocket tratado separadamente
 
-    // Adicionar filtro se fornecido
-    ...(filterFn && {
-      filter: (pathname, req) => filterFn(pathname, req)
-    }),
+    // Preservar cookies e credenciais
+    cookieDomainRewrite: '',
+    cookiePathRewrite: '',
+
+    // Preservar headers importantes do Cloudflare
+    headers: {
+      'X-Forwarded-For': '',
+      'X-Forwarded-Host': '',
+      'X-Forwarded-Proto': '',
+      'X-Real-IP': ''
+    },
 
     onProxyReq: (proxyReq, req, res) => {
-      // Preservar hostname original (sem porta)
-      const originalHost = req.headers.host || '';
-      const hostname = originalHost.split(':')[0];
-      if (hostname) {
-        proxyReq.setHeader('Host', hostname);
-      }
+      console.log(`  → Proxy: ${service.name} | ${req.method} ${req.path} → ${service.target}${req.path}`);
 
-      const targetPath = app.pathRewrite ? req.path.replace(app.path, '') : req.path;
-      console.log(`  → Proxy: ${app.name} | ${req.method} ${req.path} → ${app.target}${targetPath}`);
-    },
+      // Garantir que headers do Cloudflare sejam passados
+      const cfHeaders = {
+        'X-Forwarded-For': req.headers['x-forwarded-for'] || req.headers['cf-connecting-ip'],
+        'X-Forwarded-Host': req.headers['x-forwarded-host'] || req.headers['host'],
+        'X-Forwarded-Proto': req.headers['x-forwarded-proto'] || 'https',
+        'X-Real-IP': req.headers['cf-connecting-ip'] || req.connection.remoteAddress
+      };
 
-    onProxyReqWs: (proxyReq, req, socket) => {
-      console.log(`  ⚡ WebSocket: ${app.name} | ${req.url} → ${app.target}`);
-    },
+      Object.entries(cfHeaders).forEach(([key, value]) => {
+        if (value) proxyReq.setHeader(key, value);
+      });
 
-    onProxyRes: (proxyRes, req, res) => {
-      // Reescrever redirects se necessário
-      if (app.pathRewrite && proxyRes.headers.location) {
-        const location = proxyRes.headers.location;
-        if (location.startsWith('/') && !location.startsWith(app.path)) {
-          proxyRes.headers.location = app.path + location;
-          console.log(`  ↪ Redirect reescrito: ${location} → ${proxyRes.headers.location}`);
+      // Para Grafana: reescrever Origin e Referer para localhost para evitar bloqueio de CSRF
+      if (service.name === 'Grafana') {
+        if (req.headers.origin) {
+          proxyReq.setHeader('Origin', service.target);
+          console.log(`  🔧 Reescrevendo Origin: ${req.headers.origin} → ${service.target}`);
+        }
+        if (req.headers.referer) {
+          const refererUrl = new URL(req.headers.referer);
+          const newReferer = `${service.target}${refererUrl.pathname}${refererUrl.search}`;
+          proxyReq.setHeader('Referer', newReferer);
+          console.log(`  🔧 Reescrevendo Referer: ${req.headers.referer} → ${newReferer}`);
         }
       }
     },
 
+    onProxyRes: (proxyRes, req, res) => {
+      console.log(`  ← Response: ${service.name} | ${proxyRes.statusCode} ${proxyRes.statusMessage}`);
+    },
+
     onError: (err, req, res) => {
-      console.error(`  ❌ Error proxying to ${app.name}: ${err.message}`);
-      res.status(502).send(`
-        <!DOCTYPE html>
-        <html>
-        <head><title>Erro - ${app.name}</title></head>
-        <body>
-          <h1>⚠️ Erro de Gateway</h1>
-          <p>Não foi possível conectar ao ${app.name}</p>
-          <p><small>${err.message}</small></p>
-        </body>
-        </html>
-      `);
+      console.error(`  ❌ Erro no proxy para ${service.name}: ${err.message}`);
+      if (!res.headersSent) {
+        res.status(502).send(`
+          <!DOCTYPE html>
+          <html>
+          <head><title>Erro - ${service.name}</title></head>
+          <body>
+            <h1>⚠️ Erro de Gateway</h1>
+            <p>Não foi possível conectar ao <strong>${service.name}</strong></p>
+            <p><small>${err.message}</small></p>
+          </body>
+          </html>
+        `);
+      }
     }
-  };
-
-  return createProxyMiddleware(proxyOptions);
-}
-
-// ===== MIDDLEWARE DE REDIRECIONAMENTO PARA BARRA FINAL =====
-// Redireciona /epica para /epica/ automaticamente
-app.use((req, res, next) => {
-  const needsTrailingSlash = config.applications.some(app => {
-    // Se o path exato corresponde (sem barra final)
-    if (req.path === app.path && app.path !== '/') {
-      return true;
-    }
-    return false;
   });
 
-  if (needsTrailingSlash && !req.path.endsWith('/')) {
-    const redirectUrl = req.path + '/';
-    console.log(`  ↪ Redirecionando: ${req.path} → ${redirectUrl}`);
-    return res.redirect(301, redirectUrl);
+  // Proxy WebSocket (se habilitado)
+  if (service.websocket) {
+    WS_PROXIES[hostname] = require('http-proxy').createProxyServer({
+      target: service.target,
+      ws: true
+    });
+  }
+});
+
+console.log('==========================================');
+console.log('🚀 Gateway Hostname-Based - Cloudflare');
+console.log('==========================================');
+console.log(`Porta: ${PORT}`);
+console.log(`Modo: Roteamento por Hostname`);
+console.log(`IPs Autorizados: ${authorizedIPs.ips.length}`);
+authorizedIPs.ips.forEach(ip => console.log(`  ✓ ${ip}`));
+console.log('\nServiços configurados:');
+Object.entries(HOSTNAME_MAP).forEach(([hostname, service]) => {
+  const protection = service.ipProtection ? '🔒' : '🌐';
+  console.log(`  ${protection} ${hostname} → ${service.target}`);
+});
+console.log('==========================================\n');
+
+// ===== MIDDLEWARE DE VALIDAÇÃO DE IP =====
+function validateIP(req, res, service) {
+  // Não precisa validar se não tem proteção
+  if (!service.ipProtection) {
+    console.log(`  🌐 ${service.name}: Sem proteção de IP`);
+    return true;
   }
 
-  next();
-});
+  // Cloudflare envia o IP real no header CF-Connecting-IP
+  const cfIP = req.get('cf-connecting-ip');
+  const xForwardedFor = req.get('x-forwarded-for') || '';
+  const clientIP = cfIP || xForwardedFor.split(',')[0].trim();
 
-// ===== ROTA DE HEALTH CHECK (antes de tudo) =====
-app.get('/health', (req, res) => {
-  res.status(200).send('OK');
-});
+  // Acesso local (sem cloudflare)
+  if (!cfIP && !xForwardedFor) {
+    console.log(`  ✓ ${service.name}: Acesso local (sem validação)`);
+    return true;
+  }
 
-// ===== DASHBOARD DE SERVIÇOS (antes de tudo) =====
-app.get('/dashboard', (req, res) => {
-  const html = `
+  console.log(`  🔍 ${service.name}: Validando IP ${clientIP}`);
+
+  if (authorizedIPs.ips.includes(clientIP)) {
+    console.log(`  ✅ ${service.name}: IP autorizado`);
+    return true;
+  }
+
+  // IP não autorizado
+  console.log(`  ❌ ${service.name}: IP BLOQUEADO: ${clientIP}`);
+
+  // Log do bloqueio
+  const host = req.get('host') || '';
+  const logEntry = `[${new Date().toISOString()}] BLOCKED: ${clientIP} -> ${host}${req.path} (${service.name})\n`;
+  fs.appendFileSync(path.join(__dirname, 'blocked_access.log'), logEntry);
+
+  res.status(403).send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Acesso Negado</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          margin: 0;
+          background: #f5f5f5;
+        }
+        h1 {
+          color: #d32f2f;
+          font-size: 2em;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>🔒 Acesso Negado</h1>
+    </body>
+    </html>
+  `);
+
+  return false;
+}
+
+// ===== MIDDLEWARE PRINCIPAL =====
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  const host = req.get('host') || '';
+  const hostname = host.split(':')[0]; // Remove porta se houver
+
+  console.log(`[${timestamp}] ${req.method} ${hostname}${req.path}`);
+
+  // Rotas especiais (sem validação)
+  if (req.path === '/health') {
+    console.log('  ✓ Health check');
+    return res.status(200).send('OK');
+  }
+
+  if (req.path === '/dashboard') {
+    console.log('  ✓ Dashboard');
+    const html = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -220,8 +276,6 @@ app.get('/dashboard', (req, res) => {
     }
     .protected { background: #ffeb3b; color: #333; }
     .public { background: #4caf50; color: white; }
-    a { color: #0066cc; text-decoration: none; font-weight: bold; }
-    a:hover { text-decoration: underline; }
     .info {
       background: #e3f2fd;
       padding: 15px;
@@ -231,71 +285,71 @@ app.get('/dashboard', (req, res) => {
   </style>
 </head>
 <body>
-  <h1>🚀 Gateway Dashboard</h1>
-
+  <h1>🚀 Gateway Dashboard - Hostname-Based</h1>
   <div class="info">
-    <strong>Endpoint:</strong> ${config.gateway.ngrokDomain}<br>
+    <strong>Modo:</strong> Roteamento por Hostname (Cloudflare)<br>
     <strong>Porta:</strong> ${PORT}<br>
-    <strong>Aplicações:</strong> ${config.applications.length}<br>
     <strong>IPs Autorizados:</strong> ${authorizedIPs.ips.length}
   </div>
-
-  ${config.applications.map(app => `
+  ${Object.entries(HOSTNAME_MAP).map(([hostname, service]) => `
     <div class="service">
       <div>
-        <h3>${app.name}</h3>
-        <p><a href="${app.path}" target="_blank">${app.path}</a> → ${app.target}</p>
+        <h3>${service.name}</h3>
+        <p><strong>${hostname}</strong> → ${service.target}</p>
       </div>
-      <span class="badge ${app.ipProtection ? 'protected' : 'public'}">
-        ${app.ipProtection ? '🔒 Protegido' : '🌐 Público'}
+      <span class="badge ${service.ipProtection ? 'protected' : 'public'}">
+        ${service.ipProtection ? '🔒 Protegido' : '🌐 Público'}
       </span>
     </div>
   `).join('')}
-
 </body>
 </html>
-  `;
+    `;
+    return res.send(html);
+  }
 
-  res.send(html);
-});
+  // Identificar serviço pelo hostname
+  const service = HOSTNAME_MAP[hostname];
 
-// ===== REGISTRAR ROTAS PARA CADA APLICAÇÃO =====
-// Ordenar aplicações: paths mais específicos primeiro, raiz por último
-const sortedApps = [...config.applications].sort((a, b) => {
-  if (a.path === '/') return 1;
-  if (b.path === '/') return -1;
-  return b.path.length - a.path.length;
-});
+  if (!service) {
+    console.log(`  ❌ Hostname não mapeado: ${hostname}`);
+    return res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+      <head><title>404 - Serviço Não Encontrado</title></head>
+      <body>
+        <h1>404 - Serviço Não Encontrado</h1>
+        <p>Hostname: <strong>${hostname}</strong></p>
+        <p><a href="http://localhost:9000/dashboard">Ver Dashboard</a></p>
+      </body>
+      </html>
+    `);
+  }
 
-sortedApps.forEach(appConfig => {
-  console.log(`Registering: ${appConfig.path} → ${appConfig.target} (IP Protection: ${appConfig.ipProtection ? 'ON' : 'OFF'})`);
+  console.log(`  → Serviço identificado: ${service.name}`);
 
-  // Para path raiz (/), criar filtro para evitar capturar paths de outras apps
-  if (appConfig.path === '/') {
-    const otherPaths = config.applications
-      .filter(app => app.path !== '/')
-      .map(app => app.path);
+  // Validar IP se necessário
+  if (!validateIP(req, res, service)) {
+    return; // Resposta já foi enviada (403)
+  }
 
-    // Função de filtro: retorna false se o path pertence a outra app
-    const filterFn = (pathname, req) => {
-      const matchesOtherApp = otherPaths.some(path => pathname.startsWith(path));
-      return !matchesOtherApp; // Só processa se NÃO for de outra app
-    };
+  // Usar proxy HTTP pré-criado (REUTILIZÁVEL)
+  const proxy = HTTP_PROXIES[hostname];
 
-    // Adicionar middleware de IP se necessário
-    if (appConfig.ipProtection) {
-      app.use('/', createIPValidationMiddleware(appConfig.name));
+  if (!proxy) {
+    console.error(`  ❌ Proxy não encontrado para: ${hostname}`);
+    return res.status(500).send('Internal Server Error');
+  }
+
+  console.log(`  🔄 Executando proxy para: ${service.name}`);
+
+  try {
+    proxy(req, res, next);
+  } catch (err) {
+    console.error(`  ❌ Erro ao executar proxy: ${err.message}`);
+    if (!res.headersSent) {
+      res.status(500).send('Proxy Error');
     }
-
-    // Adicionar proxy com filtro
-    app.use('/', createApplicationProxy(appConfig, filterFn));
-  } else {
-    // Para outras apps, registrar normalmente
-    if (appConfig.ipProtection) {
-      app.use(appConfig.path, createIPValidationMiddleware(appConfig.name));
-    }
-
-    app.use(appConfig.path, createApplicationProxy(appConfig));
   }
 });
 
@@ -307,55 +361,47 @@ const server = app.listen(PORT, () => {
 });
 
 // ===== HANDLER DE WEBSOCKET UPGRADE =====
-// Custom upgrade handler to prevent multiple proxies from upgrading the same connection
-const proxyServers = new Map(); // Store proxy servers for manual upgrade handling
-
 server.on('upgrade', (req, socket, head) => {
-  console.log(`[WS UPGRADE] ${req.url}`);
+  const host = req.headers.host || '';
+  const hostname = host.split(':')[0];
 
-  // Find the matching application - use sorted apps to match most specific first
-  const matchingApp = sortedApps.find(app => req.url.startsWith(app.path));
+  console.log(`[WS UPGRADE] ${hostname}${req.url}`);
 
-  if (!matchingApp || !matchingApp.websocket) {
-    console.log(`  ❌ No WebSocket-enabled app for: ${req.url}`);
+  const service = HOSTNAME_MAP[hostname];
+
+  if (!service || !service.websocket) {
+    console.log(`  ❌ WebSocket não suportado para: ${hostname}`);
     socket.destroy();
     return;
   }
 
-  console.log(`  → Matched app: ${matchingApp.name}`);
+  console.log(`  → Serviço: ${service.name}`);
 
-  // IP validation for protected apps via ngrok
-  if (matchingApp.ipProtection) {
-    const host = req.headers.host || '';
+  // Validar IP para WebSocket
+  if (service.ipProtection) {
+    const cfIP = req.headers['cf-connecting-ip'];
+    const xForwardedFor = req.headers['x-forwarded-for'] || '';
+    const clientIP = cfIP || xForwardedFor.split(',')[0].trim();
 
-    if (host.includes(config.gateway.ngrokDomain)) {
-      const forwardedFor = req.headers['x-forwarded-for'] || '';
-      const clientIP = forwardedFor.split(',')[0].trim();
-
-      console.log(`  🔍 WS IP check: ${clientIP}`);
-
-      if (!authorizedIPs.ips.includes(clientIP)) {
-        console.log(`  ❌ WS IP BLOCKED: ${clientIP}`);
-        socket.destroy();
-        return;
-      }
-
-      console.log(`  ✅ WS IP authorized`);
+    if (clientIP && !authorizedIPs.ips.includes(clientIP)) {
+      console.log(`  ❌ WS IP BLOQUEADO: ${clientIP}`);
+      socket.destroy();
+      return;
     }
+
+    console.log(`  ✅ WS IP autorizado: ${clientIP}`);
   }
 
-  // Get or create proxy server for this app
-  const key = `${matchingApp.name}-${matchingApp.target}`;
-  if (!proxyServers.has(key)) {
-    const proxy = require('http-proxy').createProxyServer({
-      target: matchingApp.target,
-      ws: true
-    });
-    proxyServers.set(key, proxy);
+  // Usar proxy WebSocket pré-criado (REUTILIZÁVEL)
+  const proxy = WS_PROXIES[hostname];
+
+  if (!proxy) {
+    console.error(`  ❌ Proxy WS não encontrado para: ${hostname}`);
+    socket.destroy();
+    return;
   }
 
-  const proxy = proxyServers.get(key);
-  console.log(`  ⚡ Upgrading WebSocket: ${matchingApp.name} ${req.url} → ${matchingApp.target}`);
+  console.log(`  ⚡ Upgrading WebSocket: ${service.name} → ${service.target}`);
 
   proxy.ws(req, socket, head, (err) => {
     if (err) {
