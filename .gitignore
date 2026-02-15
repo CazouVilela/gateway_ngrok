@@ -9,3 +9,6 @@ __pycache__/
 dist/
 build/
 blocked_access.log
+
+# Terminal logs (real-time session logs)
+terminal_logs/

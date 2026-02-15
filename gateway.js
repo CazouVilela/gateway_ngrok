@@ -14,6 +14,7 @@
 
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
 
@@ -22,6 +23,50 @@ const authorizedIPs = JSON.parse(fs.readFileSync(path.join(__dirname, 'authorize
 
 const app = express();
 const PORT = 9000;
+
+// ===== LOG DE SEGURANÇA (para Fail2Ban) =====
+const SECURITY_LOG = '/var/log/gateway/metabase-auth.log';
+const securityLogDir = path.dirname(SECURITY_LOG);
+if (!fs.existsSync(securityLogDir)) {
+  try { fs.mkdirSync(securityLogDir, { recursive: true }); } catch (e) {
+    console.error(`⚠️ Não foi possível criar ${securityLogDir}: ${e.message}`);
+  }
+}
+
+function logSecurity(ip, method, urlPath, status) {
+  const now = new Date();
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mon = months[now.getMonth()];
+  const yyyy = now.getFullYear();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const tz = -now.getTimezoneOffset();
+  const tzSign = tz >= 0 ? '+' : '-';
+  const tzH = String(Math.floor(Math.abs(tz) / 60)).padStart(2, '0');
+  const tzM = String(Math.abs(tz) % 60).padStart(2, '0');
+  const timestamp = `${dd}/${mon}/${yyyy}:${hh}:${mm}:${ss} ${tzSign}${tzH}${tzM}`;
+  const line = `${ip} [${timestamp}] "${method} ${urlPath} HTTP/1.1" ${status}\n`;
+  fs.appendFile(SECURITY_LOG, line, (err) => {
+    if (err) console.error(`⚠️ Erro escrevendo log de segurança: ${err.message}`);
+  });
+}
+
+// ===== RATE-LIMIT: Login Metabase (5 tentativas/min por IP) =====
+const metabaseLoginLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.headers['cf-connecting-ip'] || req.ip,
+  handler: (req, res) => {
+    const ip = req.headers['cf-connecting-ip'] || req.ip;
+    console.log(`  🚫 Rate-limit: ${ip} excedeu 5 tentativas/min no login Metabase`);
+    logSecurity(ip, req.method, req.path, 429);
+    res.status(429).json({ message: 'Muitas tentativas de login. Aguarde 1 minuto.' });
+  }
+});
 
 // ===== MAPEAMENTO DE HOSTNAMES → SERVIÇOS =====
 const HOSTNAME_MAP = {
@@ -118,6 +163,16 @@ Object.entries(HOSTNAME_MAP).forEach(([hostname, service]) => {
 
     onProxyRes: (proxyRes, req, res) => {
       console.log(`  ← Response: ${service.name} | ${proxyRes.statusCode} ${proxyRes.statusMessage}`);
+
+      // Log de segurança: login falho no Metabase (401)
+      if (service.name === 'Metabase' &&
+          req.method === 'POST' &&
+          req.path === '/api/session' &&
+          proxyRes.statusCode === 401) {
+        const ip = req.headers['cf-connecting-ip'] || req.connection.remoteAddress;
+        console.log(`  🔐 Login falho Metabase de ${ip}`);
+        logSecurity(ip, req.method, req.path, 401);
+      }
     },
 
     onError: (err, req, res) => {
@@ -339,6 +394,17 @@ app.use((req, res, next) => {
   if (!proxy) {
     console.error(`  ❌ Proxy não encontrado para: ${hostname}`);
     return res.status(500).send('Internal Server Error');
+  }
+
+  // Rate-limit: login Metabase via internet (CF-Connecting-IP presente)
+  if (hostname === 'metabase.sistema.cloud' &&
+      req.method === 'POST' &&
+      req.path === '/api/session' &&
+      req.headers['cf-connecting-ip']) {
+    console.log(`  🔒 Rate-limit check: login Metabase de ${req.headers['cf-connecting-ip']}`);
+    return metabaseLoginLimiter(req, res, () => {
+      proxy(req, res, next);
+    });
   }
 
   console.log(`  🔄 Executando proxy para: ${service.name}`);
