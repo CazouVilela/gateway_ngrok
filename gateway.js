@@ -13,10 +13,17 @@
  */
 
 const express = require('express');
+const https = require('https');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
+
+// ===== CERTIFICADOS SSL =====
+const SSL_OPTIONS = {
+  key: fs.readFileSync(path.join(__dirname, 'ssl', 'gateway.key')),
+  cert: fs.readFileSync(path.join(__dirname, 'ssl', 'gateway.crt'))
+};
 
 // ===== CARREGAR CONFIGURAÇÕES =====
 const authorizedIPs = JSON.parse(fs.readFileSync(path.join(__dirname, 'authorized_ips.json'), 'utf8'));
@@ -105,6 +112,12 @@ const HOSTNAME_MAP = {
     target: 'http://localhost:3780',
     ipProtection: true,
     websocket: true
+  },
+  'oraculo.sistema.cloud': {
+    name: 'Oraculo Invest',
+    target: 'http://localhost:8050',
+    ipProtection: true,
+    websocket: false
   }
 };
 
@@ -119,9 +132,9 @@ Object.entries(HOSTNAME_MAP).forEach(([hostname, service]) => {
     changeOrigin: true,
     ws: false, // DESABILITADO - WebSocket tratado separadamente
 
-    // Preservar cookies e credenciais
-    cookieDomainRewrite: '',
-    cookiePathRewrite: '',
+    // Preservar cookies e credenciais (não reescrever domain/path)
+    cookieDomainRewrite: false,
+    cookiePathRewrite: false,
 
     // Preservar headers importantes do Cloudflare
     headers: {
@@ -294,6 +307,154 @@ app.use((req, res, next) => {
     return res.status(200).send('OK');
   }
 
+  // Servir assets patchados do Airbyte (fix Chrome useSuspenseQuery)
+  if (req.path.startsWith('/assets/') && req.path.endsWith('.js')) {
+    const filename = path.basename(req.path);
+    const patchedFile = path.join(__dirname, 'assets', filename);
+    if (fs.existsSync(patchedFile)) {
+      console.log(`  🔧 Servindo ${filename} PATCHADO (fix Chrome)`);
+      res.setHeader('Content-Type', 'application/javascript');
+      res.setHeader('Cache-Control', 'no-cache');
+      return res.sendFile(patchedFile);
+    }
+  }
+
+  // Página de diagnóstico Airbyte (acessar em Chrome para debug)
+  if (req.path === '/diag') {
+    console.log('  🔍 Diagnóstico Airbyte');
+    return res.send(`<!DOCTYPE html>
+<html><head><title>Airbyte Diagnostico v2</title></head>
+<body>
+<h2>Diagnostico Airbyte v2 - Chrome</h2>
+<pre id="r">Executando...</pre>
+<script>
+(async function(){
+  const el = document.getElementById('r');
+  let out = '';
+  function log(s){ out += s + '\\n'; el.textContent = out; }
+
+  log('User-Agent: ' + navigator.userAgent);
+  log('Origin: ' + window.location.origin);
+  log('Protocol: ' + window.location.protocol);
+  log('isSecureContext: ' + window.isSecureContext);
+  log('');
+
+  // Test 1: web_backend/config - o que main-itdw1a9f.js chama (Mt/xun)
+  log('=== Test 1: /api/v1/web_backend/config (Entry Point - xun/Mt) ===');
+  try {
+    const h1 = new Headers();
+    h1.set('X-Airbyte-Analytic-Source', 'webapp');
+    const r1 = await fetch('/api/v1/web_backend/config', {method: 'GET', headers: h1});
+    log('Status: ' + r1.status + ' ' + r1.statusText);
+    log('ok: ' + r1.ok);
+    const ct1 = r1.headers.get('content-type');
+    log('content-type header: ' + JSON.stringify(ct1));
+    log('ct !== "application/json": ' + (ct1 !== 'application/json'));
+    log('ALL headers:');
+    r1.headers.forEach(function(v,k){ log('  ' + k + ': ' + v); });
+    if (ct1 !== 'application/json') {
+      log('*** BLOB PATH - isto causa o bug! ***');
+      const blob = await r1.blob();
+      log('Blob type: ' + blob.type + ', size: ' + blob.size);
+      log('Blob text: ' + (await blob.text()).substring(0,300));
+    } else {
+      const json = await r1.json();
+      log('JSON result type: ' + typeof json);
+      log('JSON result: ' + JSON.stringify(json).substring(0,400));
+      log('edition: ' + (json ? json.edition : 'N/A'));
+    }
+  } catch(e) { log('FALHOU: ' + e.message); }
+
+  log('');
+
+  // Test 2: instance_configuration - o que o hook lF/D chama
+  log('=== Test 2: /api/v1/instance_configuration (React Hook - lF/D) ===');
+  try {
+    const h2 = new Headers();
+    h2.set('X-Airbyte-Analytic-Source', 'webapp');
+    const r2 = await fetch('/api/v1/instance_configuration', {method: 'GET', headers: h2});
+    log('Status: ' + r2.status);
+    const ct2 = r2.headers.get('content-type');
+    log('content-type: ' + JSON.stringify(ct2));
+    log('ct !== "application/json": ' + (ct2 !== 'application/json'));
+    if (ct2 !== 'application/json') {
+      log('*** BLOB PATH - isto causa o bug! ***');
+    } else {
+      const json2 = await r2.json();
+      log('JSON: ' + JSON.stringify(json2).substring(0,400));
+    }
+  } catch(e) { log('FALHOU: ' + e.message); }
+
+  log('');
+
+  // Test 3: Simular EXATAMENTE a funcao fyt do Airbyte
+  log('=== Test 3: Simulacao EXATA da funcao fyt ===');
+  async function fyt_sim(n, responseType) {
+    if (n.status === 204) return {};
+    if (n.ok) {
+      var isBlob = responseType === 'blob' || n.headers.get('content-type') !== 'application/json';
+      log('  fyt: ok=' + n.ok + ', responseType=' + responseType + ', ct=' + JSON.stringify(n.headers.get('content-type')) + ', isBlob=' + isBlob);
+      return isBlob ? n.blob() : n.json();
+    }
+    log('  fyt: NOT OK, status=' + n.status);
+    throw new Error('Response not ok: ' + n.status);
+  }
+
+  // 3a: web_backend/config (como xun chama - sem responseType)
+  log('--- 3a: web_backend/config via fyt ---');
+  try {
+    const h3 = new Headers();
+    h3.set('X-Airbyte-Analytic-Source', 'webapp');
+    const r3 = await fetch('/api/v1/web_backend/config', {method: 'GET', headers: h3});
+    const result3 = await fyt_sim(r3, undefined);
+    log('  Result type: ' + typeof result3);
+    log('  Is Blob: ' + (result3 instanceof Blob));
+    log('  Result: ' + (result3 instanceof Blob ? 'BLOB size=' + result3.size : JSON.stringify(result3).substring(0,300)));
+    if (result3 && typeof result3 === 'object' && !(result3 instanceof Blob)) {
+      log('  edition: ' + result3.edition);
+      log('  edition.toLowerCase(): ' + (result3.edition ? result3.edition.toLowerCase() : 'CRASH'));
+    }
+  } catch(e) { log('  FALHOU: ' + e.message); }
+
+  // 3b: instance_configuration via fyt
+  log('--- 3b: instance_configuration via fyt ---');
+  try {
+    const h4 = new Headers();
+    h4.set('X-Airbyte-Analytic-Source', 'webapp');
+    const r4 = await fetch('/api/v1/instance_configuration', {method: 'GET', headers: h4});
+    const result4 = await fyt_sim(r4, undefined);
+    log('  Result type: ' + typeof result4);
+    log('  Is Blob: ' + (result4 instanceof Blob));
+    log('  Result: ' + (result4 instanceof Blob ? 'BLOB size=' + result4.size : JSON.stringify(result4).substring(0,300)));
+  } catch(e) { log('  FALHOU: ' + e.message); }
+
+  log('');
+
+  // Test 4: Service Worker check
+  log('=== Test 4: Service Worker ===');
+  if ('serviceWorker' in navigator) {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    log('Service Workers registrados: ' + regs.length);
+    regs.forEach(function(r,i){ log('  SW ' + i + ': ' + r.scope); });
+  } else {
+    log('Service Worker NAO suportado (isSecureContext=' + window.isSecureContext + ')');
+  }
+
+  log('');
+
+  // Test 5: Testar se Chrome bloqueia algo especifico
+  log('=== Test 5: window.crossOriginIsolated & Permissions ===');
+  log('crossOriginIsolated: ' + window.crossOriginIsolated);
+  log('cookieEnabled: ' + navigator.cookieEnabled);
+  log('document.cookie: ' + JSON.stringify(document.cookie));
+
+  log('');
+  log('=== FIM DO DIAGNOSTICO v2 ===');
+})();
+</script>
+</body></html>`);
+  }
+
   if (req.path === '/dashboard') {
     console.log('  ✓ Dashboard');
     const html = `
@@ -366,8 +527,49 @@ app.use((req, res, next) => {
   // Identificar serviço pelo hostname
   const service = HOSTNAME_MAP[hostname];
 
+  // ===== FIX CHROME: navigator.onLine=false em IPs de LAN =====
+  // Chrome reporta navigator.onLine=false para IPs que nao sao localhost,
+  // fazendo React Query pausar queries e retornar data=undefined.
+  // Injetamos um fix no HTML do Airbyte para forcar onLine=true.
+  const isAirbyte = hostname === 'airbyte.sistema.cloud' || !service;
+  if (isAirbyte && req.method === 'GET' && (req.path === '/' || req.path === '/index.html')) {
+    console.log('  🔧 Injetando fix navigator.onLine no HTML do Airbyte');
+    const http = require('http');
+    // Repassar cookies do browser para o Airbyte backend
+    const proxyHeaders = {};
+    if (req.headers.cookie) proxyHeaders.cookie = req.headers.cookie;
+    if (req.headers.authorization) proxyHeaders.authorization = req.headers.authorization;
+    http.get('http://localhost:8000' + req.path, { headers: proxyHeaders }, (proxyRes) => {
+      let body = '';
+      proxyRes.on('data', chunk => body += chunk);
+      proxyRes.on('end', () => {
+        const fix = '<script>Object.defineProperty(navigator,"onLine",{get:()=>true,configurable:true})</script>';
+        const modified = body.replace('<head>', '<head>' + fix);
+        const headers = {};
+        // Preservar TODOS os headers da response, incluindo Set-Cookie
+        Object.keys(proxyRes.headers).forEach(k => { headers[k] = proxyRes.headers[k]; });
+        headers['content-length'] = Buffer.byteLength(modified);
+        res.writeHead(proxyRes.statusCode, headers);
+        res.end(modified);
+      });
+    }).on('error', (err) => {
+      console.error(`  ❌ Erro fetch HTML Airbyte: ${err.message}`);
+      res.status(502).send('Erro ao conectar ao Airbyte');
+    });
+    return;
+  }
+
   if (!service) {
-    console.log(`  ❌ Hostname não mapeado: ${hostname}`);
+    // Fallback: acesso direto via IP → Airbyte
+    console.log(`  🔄 Fallback para Airbyte (acesso direto via IP: ${hostname})`);
+    const airbyteProxy = HTTP_PROXIES['airbyte.sistema.cloud'];
+    if (airbyteProxy) {
+      try {
+        return airbyteProxy(req, res, next);
+      } catch (err) {
+        console.error(`  ❌ Erro no fallback proxy: ${err.message}`);
+      }
+    }
     return res.status(404).send(`
       <!DOCTYPE html>
       <html>
@@ -375,7 +577,7 @@ app.use((req, res, next) => {
       <body>
         <h1>404 - Serviço Não Encontrado</h1>
         <p>Hostname: <strong>${hostname}</strong></p>
-        <p><a href="http://localhost:9000/dashboard">Ver Dashboard</a></p>
+        <p><a href="https://localhost:9000/dashboard">Ver Dashboard</a></p>
       </body>
       </html>
     `);
@@ -419,11 +621,11 @@ app.use((req, res, next) => {
   }
 });
 
-// ===== INICIAR SERVIDOR =====
-const server = app.listen(PORT, () => {
-  console.log(`\n✅ Gateway rodando na porta ${PORT}`);
-  console.log(`📊 Dashboard: http://localhost:${PORT}/dashboard`);
-  console.log(`❤️  Health check: http://localhost:${PORT}/health\n`);
+// ===== INICIAR SERVIDOR HTTPS =====
+const server = https.createServer(SSL_OPTIONS, app).listen(PORT, () => {
+  console.log(`\n✅ Gateway HTTPS rodando na porta ${PORT}`);
+  console.log(`📊 Dashboard: https://localhost:${PORT}/dashboard`);
+  console.log(`❤️  Health check: https://localhost:${PORT}/health\n`);
 });
 
 // ===== HANDLER DE WEBSOCKET UPGRADE =====
